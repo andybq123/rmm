@@ -1,9 +1,11 @@
 # Caddy — HTTPS automático (Let's Encrypt)
 # O domínio vem da variável DOMAIN do .env — nada fixo aqui.
 # Quem preenche o .env é o install-vps.sh, perguntando o domínio na instalação.
+# O destino é o serviço "app" do docker-compose (NUNCA 127.0.0.1: dentro do
+# container do Caddy, 127.0.0.1 é o próprio Caddy e a conexão é recusada).
 {$DOMAIN} {
 	encode zstd gzip
-	reverse_proxy 127.0.0.1:3000
+	reverse_proxy app:3000
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"

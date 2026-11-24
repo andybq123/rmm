@@ -20,10 +20,13 @@ Painel web corporativo para monitoramento remoto (RMM) de computadores Windows e
 ```
 client/            React + Tailwind (interface)
 server/            Backend (actions tipadas) + autenticação + agentes
+standalone/        Servidor do app na VPS (serve o painel + executa as actions, porta 3000)
 drizzle/           Migrations SQL
 deploy/            VPS: install-vps.sh, Caddyfile, nginx.conf, backup.sh, rmm-agent.service
 agent/             Build do .exe (PyInstaller) e instalador (Inno Setup)
-docker-compose.yml Proxy reverso com HTTPS automático (Caddy) — domínio via .env
+vendor/            SDK do painel vendorizado como código-fonte de texto (sem binários; o build do Docker é autossuficiente)
+Dockerfile         Imagem do serviço "app" do compose
+docker-compose.yml App + proxy reverso com HTTPS automático (Caddy) — domínio via .env
 space.json         Metadados do artefato
 ```
 
@@ -73,15 +76,20 @@ sudo DOMAIN=painel.suaempresa.com.br bash deploy/install-vps.sh
 O que o instalador faz por você:
 - Valida o domínio e grava `DOMAIN`, `PUBLIC_URL=https://<domínio>` e `RMM_SERVER_URL=https://<domínio>/actions` no arquivo `.env` (permissão 600) + gera um `SESSION_SECRET` aleatório
 - Instala **Docker** (se faltar), **UFW** liberando só **22/80/443**, **Fail2ban** e **atualizações automáticas** de segurança
+- No final, **sobe o sistema sozinho** (`docker compose up -d --build` executado na raiz do projeto) e mostra o `docker compose ps` — os dois containers, `rmm-app` e `rmm-caddy`, precisam aparecer "Up"
 
 ### Passo 4 — Suba o sistema com HTTPS automático
+O `install-vps.sh` já faz isso no final. Para subir de novo (ou após um `git pull`), rode na **raiz do projeto** (`cd ~/rmm`, onde está o `docker-compose.yml` — não dentro de `deploy/`):
+
 ```bash
-docker compose up -d
-docker compose ps              # o serviço rmm-caddy deve estar "Up"
+docker compose up -d --build
+docker compose ps              # DOIS serviços "Up": rmm-app e rmm-caddy
 docker compose logs -f caddy   # acompanhe a emissão do certificado Let's Encrypt (Ctrl+C sai)
 ```
 
-O `docker-compose.yml` lê `DOMAIN`/`PUBLIC_URL` do `.env` — sem `.env` válido ele para e avisa, de propósito. O Caddy pede e renova o certificado sozinho.
+São dois containers: o **rmm-app** (o painel em si, construído pelo `Dockerfile`, ouvindo na porta interna 3000) e o **rmm-caddy** (portas 80/443, HTTPS automático, encaminha para `app:3000`). Se subir só o Caddy, o site responde **502** — é o sintoma de que o app não subiu.
+
+O `docker-compose.yml` lê `DOMAIN`/`PUBLIC_URL` do `.env` — sem `.env` válido ele para e avisa, de propósito. O Caddy pede e renova o certificado sozinho. O banco do painel fica no volume Docker `rmm_app_data` (sobrevive a `docker compose down` sem `-v`).
 
 ### Passo 5 — Teste de fora da VPS
 ```bash
@@ -120,7 +128,7 @@ docker compose up -d --build
 
 ### Problemas comuns
 - **Certificado não emite:** confira se o registro A aponta para esta VPS e se as portas 80/443 estão liberadas na provedora; veja `docker compose logs caddy`.
-- **502 no navegador:** o app interno (porta 3000) não subiu — confira os serviços e reinicie com `docker compose restart`.
+- **502 no navegador:** o app não está respondendo para o Caddy. Confira `docker compose ps` (os dois containers, `rmm-app` e `rmm-caddy`, precisam estar "Up"), veja `docker compose logs app` e recrie com `docker compose up -d --build` na raiz do projeto. Nas versões antigas deste repositório o compose subia **só o Caddy** e ele apontava para `127.0.0.1:3000` (ele mesmo) — se o seu clone é antigo, faça `git pull` antes.
 - **Agente não aparece no painel:** na máquina, confira o serviço `RmmAgent` em execução e se `https://<domínio>/actions` responde; gere o instalador de novo se trocou o domínio ou rotacionou o token.
 
 ---

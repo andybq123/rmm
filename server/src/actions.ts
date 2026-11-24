@@ -79,11 +79,14 @@ function buildGithubReadme(): string {
     "server/          Backend (actions tipadas)",
     "  src/actions.ts Actions da API + scripts dos agentes + autenticação",
     "  src/schema.ts  Modelo de dados (Drizzle / SQLite)",
+    "standalone/      Servidor do app na VPS (painel + actions, porta 3000)",
     "drizzle/         Migrations SQL",
     "deploy/          VPS: install-vps.sh, Caddyfile, nginx.conf, backup.sh, rmm-agent.service",
     "agent/           Build do .exe (PyInstaller) e instalador (Inno Setup)",
+    "vendor/          SDK do painel vendorizado como código-fonte de texto (sem binários; build do Docker autossuficiente)",
     "space.json       Metadados do artefato",
-    "docker-compose.yml  Proxy reverso com HTTPS automático (Caddy)",
+    "Dockerfile       Imagem do serviço app do compose",
+    "docker-compose.yml  App + proxy reverso com HTTPS automático (Caddy)",
     "```",
     "",
     "---",
@@ -126,14 +129,17 @@ function buildGithubReadme(): string {
     "O que o instalador faz por você:",
     "- Valida o domínio e grava `DOMAIN`, `PUBLIC_URL=https://<domínio>` e `RMM_SERVER_URL=https://<domínio>/actions` no arquivo `.env` (permissão 600) + gera um `SESSION_SECRET` aleatório",
     "- Instala **Docker** (se faltar), **UFW** liberando só **22/80/443**, **Fail2ban** e **atualizações automáticas** de segurança",
+    "- No final, **sobe o sistema sozinho** (`docker compose up -d --build` executado na raiz do projeto) e mostra o `docker compose ps` — os dois containers, `rmm-app` e `rmm-caddy`, precisam aparecer \"Up\"",
     "",
     "### Passo 4 — Suba o sistema com HTTPS automático",
+    "O `install-vps.sh` já faz isso no final. Para subir de novo (ou após um `git pull`), rode na **raiz do projeto** (`cd ~/rmm`, onde está o `docker-compose.yml` — não dentro de `deploy/`):",
     "```bash",
-    "docker compose up -d",
-    "docker compose ps        # o serviço rmm-caddy deve estar \"Up\"",
+    "docker compose up -d --build",
+    "docker compose ps        # DOIS serviços \"Up\": rmm-app e rmm-caddy",
     "docker compose logs -f caddy   # acompanhe a emissão do certificado Let's Encrypt (Ctrl+C sai)",
     "```",
-    "O `docker-compose.yml` lê `DOMAIN`/`PUBLIC_URL` do `.env` — sem `.env` válido ele para e avisa, de propósito. O Caddy pede e renova o certificado sozinho.",
+    "São dois containers: o **rmm-app** (o painel, construído pelo `Dockerfile`, porta interna 3000) e o **rmm-caddy** (80/443, encaminha para `app:3000`). Se subir só o Caddy, o site responde **502**.",
+    "O `docker-compose.yml` lê `DOMAIN`/`PUBLIC_URL` do `.env` — sem `.env` válido ele para e avisa, de propósito. O Caddy pede e renova o certificado sozinho. O banco fica no volume Docker `rmm_app_data`.",
     "",
     "### Passo 5 — Teste de fora da VPS",
     "```bash",
@@ -171,7 +177,7 @@ function buildGithubReadme(): string {
     "",
     "### Problemas comuns",
     "- **Certificado não emite:** confira se o registro A aponta para esta VPS e se as portas 80/443 estão liberadas na provedora; veja `docker compose logs caddy`.",
-    "- **502 no navegador:** o app interno (porta 3000) não subiu — confira os serviços e reinicie com `docker compose restart`.",
+    "- **502 no navegador:** o app não está respondendo para o Caddy. Confira `docker compose ps` (os dois containers, `rmm-app` e `rmm-caddy`, precisam estar \"Up\"), veja `docker compose logs app` e recrie com `docker compose up -d --build` na raiz do projeto. Em clones antigos o compose subia só o Caddy apontando para `127.0.0.1:3000` (ele mesmo) — faça `git pull` antes.",
     "- **Agente não aparece no painel:** na máquina, confira o serviço `RmmAgent` em execução e se `https://<domínio>/actions` responde; gere o instalador de novo se trocou o domínio ou rotacionou o token.",
     "",
     "---",
@@ -218,16 +224,33 @@ function buildDeploymentFiles(publicUrl: string) {
   const actionsUrl = actionsUrlFromPublic(publicUrl);
   const domainForDocs = domain || "<domínio informado na instalação>";
   const dockerCompose = `# RMM Console — docker-compose para VPS Linux
+# São DOIS serviços: "app" (o painel, porta interna 3000, imagem do
+# Dockerfile da raiz) e "caddy" (80/443, encaminha para app:3000).
+# Se subir só o Caddy, o navegador recebe 502 — não há app ouvindo.
 # O domínio NÃO fica fixo aqui: ele vem do .env (DOMAIN / PUBLIC_URL),
 # preenchido pelo deploy/install-vps.sh, que pergunta o domínio na instalação.
 # Sem DOMAIN no .env o compose falha de propósito (mensagem abaixo).
-# Uso: cp deploy/.env.example .env  # edite DOMAIN/PUBLIC_URL
-#      docker compose up -d
+# Uso (na RAIZ do projeto): cp deploy/.env.example .env  # edite DOMAIN/PUBLIC_URL
+#      docker compose up -d --build
+#      docker compose ps   # rmm-app e rmm-caddy devem estar "Up"
 services:
+  app:
+    build: .
+    container_name: rmm-app
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - RMM_DB_PATH=/app/data/app.db
+    volumes:
+      - app_data:/app/data
+    expose:
+      - "3000"
   caddy:
     image: caddy:2-alpine
     container_name: rmm-caddy
     restart: unless-stopped
+    depends_on:
+      - app
     ports:
       - "80:80"
       - "443:443"
@@ -240,15 +263,18 @@ services:
       - DOMAIN=\${DOMAIN:?Defina DOMAIN no arquivo .env - e o dominio desta VPS, ex. o que voce apontou no DNS}
       - PUBLIC_URL=\${PUBLIC_URL:?Defina PUBLIC_URL no arquivo .env - ex. https:// + o seu DOMAIN}
 volumes:
+  app_data:
   caddy_data:
   caddy_config:
 `;
   const caddyfile = `# Caddy — HTTPS automático (Let's Encrypt)
 # O domínio vem da variável de ambiente DOMAIN (do .env) — nada fixo aqui.
 # O install-vps.sh pergunta o domínio e grava DOMAIN/PUBLIC_URL no .env.
+# O destino é o serviço "app" do docker-compose (NUNCA 127.0.0.1: dentro do
+# container do Caddy, 127.0.0.1 é o próprio Caddy e a conexão é recusada).
 {$DOMAIN} {
   encode zstd gzip
-  reverse_proxy 127.0.0.1:3000
+  reverse_proxy app:3000
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Content-Type-Options "nosniff"
@@ -256,14 +282,13 @@ volumes:
     Referrer-Policy "strict-origin-when-cross-origin"
     -Server
   }
-  log {
-    output file /var/log/caddy/rmm.log
-  }
 }
 `;
   const nginxConf = `# Nginx — alternativa ao Caddy (HTTPS com Certbot)
 # __DOMAIN__ é substituído pelo domínio informado na instalação:
 #   sed -i "s/__DOMAIN__/$DOMAIN/g" deploy/nginx.conf   (o install-vps.sh faz isso)
+# O destino é o serviço "app" do docker-compose: rode o Nginx na mesma rede
+# Docker do compose. NUNCA 127.0.0.1 se o Nginx estiver em container.
 server {
   listen 80;
   server_name __DOMAIN__;
@@ -280,7 +305,7 @@ server {
   add_header X-Frame-Options SAMEORIGIN always;
   client_max_body_size 2m;
   location / {
-    proxy_pass http://127.0.0.1:3000;
+    proxy_pass http://app:3000;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -352,14 +377,24 @@ chmod 600 .env
 echo "[rmm] .env atualizado com DOMAIN=$DOMAIN"
 echo "[rmm] Base pronta. Próximos passos:"
 echo " 1) Confirme o DNS: registro A de $DOMAIN -> IP público desta VPS"
-echo " 2) Suba o proxy (HTTPS automático): docker compose up -d"
-echo " 3) No painel, em Agentes > Domínio, confira/salve $PUBLIC_URL"
-echo " 4) Teste de fora: curl -I $PUBLIC_URL"
+echo " 2) No painel, em Agentes > Criar o site, salve o nome do site e $PUBLIC_URL"
+echo " 3) Teste de fora: curl -I $PUBLIC_URL"
+# 3) Sobe os DOIS serviços (app + caddy) a partir da RAIZ do projeto.
+# NUNCA rode "docker compose" de dentro de deploy/: o risco é subir um
+# compose antigo/incompleto, só com o Caddy — o site responde 502 porque
+# não há app ouvindo. Aqui subimos da raiz, com o compose completo.
+echo "[rmm] Subindo o sistema (rmm-app + rmm-caddy)..."
+docker compose up -d --build
+docker compose ps
+echo "[rmm] Pronto. Os DOIS containers acima precisam estar 'Up'."
+echo "[rmm] Se o rmm-app não subiu, veja o motivo: docker compose logs app"
 `;
   const backupScript = `#!/usr/bin/env bash
-# Backup diário do banco do RMM — agende no cron: 0 3 * * * /opt/rmm/backup.sh
+# Backup diário do banco do RMM — agende no cron: 0 3 * * * /opt/rmm/deploy/backup.sh
 set -euo pipefail
-SRC="\${RMM_DB:-/opt/rmm/app.db}"
+# No Docker, o banco fica no volume app_data do compose:
+#   docker volume inspect rmm_app_data (Mountpoint) -> .../_data/app.db
+SRC="\${RMM_DB:-/var/lib/docker/volumes/rmm_app_data/_data/app.db}"
 DEST_DIR="\${RMM_BACKUP_DIR:-/opt/rmm/backups}"
 mkdir -p "$DEST_DIR"
 STAMP=$(date +%F-%H%M)

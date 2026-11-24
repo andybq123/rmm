@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .space-build/
+.bun-cache/
 app.db
 app.db-*
 *.log
@@ -8,3 +9,10 @@ app.db-*
 .env.*
 !.env.example
 .DS_Store
+
+# EXCEÇÃO: o SDK vendorizado em vendor/space-sdk/ é código-fonte de texto
+# do projeto (o build do Docker na VPS depende dele). Sem esta exceção, a
+# regra "dist/" acima esconderia vendor/space-sdk/dist/ do Git e o clone
+# limpo na VPS quebraria.
+!vendor/space-sdk/dist/
+!vendor/space-sdk/dist/**

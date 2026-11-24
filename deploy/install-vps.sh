@@ -53,6 +53,16 @@ echo "[rmm] .env atualizado com DOMAIN=$DOMAIN"
 
 echo "[rmm] Base pronta:"
 echo " 1) Confirme o DNS: registro A de $DOMAIN -> IP público desta VPS"
-echo " 2) docker compose up -d   (HTTPS automático via Caddy)"
-echo " 3) No painel, em Agentes > Criar o site, salve o nome do site e $PUBLIC_URL — o instalador do agente sai pré-configurado com ele"
-echo " 4) Teste de fora: curl -I $PUBLIC_URL"
+echo " 2) No painel, em Agentes > Criar o site, salve o nome do site e $PUBLIC_URL — o instalador do agente sai pré-configurado com ele"
+echo " 3) Teste de fora: curl -I $PUBLIC_URL"
+
+# 3) Sobe os DOIS serviços (app + caddy) a partir da RAIZ do projeto.
+# NUNCA rode "docker compose" de dentro de deploy/: lá não há compose e o
+# risco é subir um compose antigo/incompleto, só com o Caddy — o site
+# responde 502 porque não há app ouvindo. Aqui subimos da raiz, com o
+# docker-compose.yml completo (app construído pelo Dockerfile + Caddy).
+echo "[rmm] Subindo o sistema (rmm-app + rmm-caddy)..."
+docker compose up -d --build
+docker compose ps
+echo "[rmm] Pronto. Os DOIS containers acima precisam estar 'Up'."
+echo "[rmm] Se o rmm-app não subiu, veja o motivo: docker compose logs app"

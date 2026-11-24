@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Backup diário do banco — cron: 0 3 * * * /opt/rmm/deploy/backup.sh
 set -euo pipefail
-SRC="${RMM_DB:-/opt/rmm/app.db}"
+# No Docker, o banco fica no volume app_data do compose:
+#   docker volume inspect rmm_app_data  (campo Mountpoint) -> .../_data/app.db
+SRC="${RMM_DB:-/var/lib/docker/volumes/rmm_app_data/_data/app.db}"
 DEST_DIR="${RMM_BACKUP_DIR:-/opt/rmm/backups}"
 mkdir -p "$DEST_DIR"
 STAMP=$(date +%F-%H%M)

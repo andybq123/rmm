@@ -57,7 +57,9 @@ function buildGithubReadme(): string {
   return [
     "# RMM — Monitor de Computadores",
     "",
-    "Painel web corporativo para monitoramento remoto (RMM) de computadores Windows e Linux, com agentes reais, alertas automáticos e comandos remotos. Preparado para VPS Linux com domínio público e HTTPS.",
+    "Painel web corporativo para monitoramento remoto (RMM) de computadores Windows e Linux, com agentes reais, alertas automáticos e comandos remotos. Preparado para **VPS Linux com IP público e HTTPS**.",
+    "",
+    "Fluxo estilo Tactical RMM: você instala o painel na VPS, **cria o site no painel** (nome + domínio) e **gera o instalador .exe já pré-configurado** com esse site/domínio e o token — em cada máquina Windows é só executar o instalador, sem digitar servidor nenhum.",
     "",
     "## Funcionalidades",
     "- Tela de login com usuários, papéis (Administrador / Operador / Visualizador) e sessões de 7 dias",
@@ -65,10 +67,9 @@ function buildGithubReadme(): string {
     "- Métricas por máquina: CPU, RAM, disco, uptime, IP, MAC, hardware e histórico em gráfico",
     "- Alertas automáticos quando CPU, RAM ou disco passam de 90%",
     "- Comandos remotos: reiniciar, desligar, coletar informações e executar script",
-    "- Agentes reais: Bash (Linux), PowerShell (Windows) e Python universal — envio a cada 60s",
-    "- Agente Windows instalável (.exe) via PyInstaller + Inno Setup (código aberto, sem custo)",
+    "- **Site no painel + instalador .exe gerado pré-configurado** (domínio + token embutidos, como no Tactical RMM)",
+    "- Agentes de script: Bash (Linux), PowerShell (Windows) e Python universal — envio a cada 60s, já apontando para o site",
     "- Token de matrícula para cadastro seguro de novos dispositivos",
-    "- Configuração de domínio público no painel — os scripts já saem apontando para ele",
     "",
     "## Estrutura do projeto",
     "```",
@@ -79,31 +80,113 @@ function buildGithubReadme(): string {
     "  src/actions.ts Actions da API + scripts dos agentes + autenticação",
     "  src/schema.ts  Modelo de dados (Drizzle / SQLite)",
     "drizzle/         Migrations SQL",
-    "deploy/          VPS: docker-compose, Caddy/Nginx, install e backup",
+    "deploy/          VPS: install-vps.sh, Caddyfile, nginx.conf, backup.sh, rmm-agent.service",
     "agent/           Build do .exe (PyInstaller) e instalador (Inno Setup)",
     "space.json       Metadados do artefato",
     "docker-compose.yml  Proxy reverso com HTTPS automático (Caddy)",
     "```",
     "",
-    "## Instalação em VPS Linux (domínio + HTTPS)",
-    "1. Aponte o DNS: registro **A** do domínio/subdomínio que você escolher para o IP público da VPS. Nenhum domínio é fixo no código.",
-    "2. Na VPS (Ubuntu/Debian): `sudo bash deploy/install-vps.sh` — o instalador **pergunta o domínio** (ou aceita `DOMAIN=<seu-dominio>` / argumento) e grava `DOMAIN`/`PUBLIC_URL`/`RMM_SERVER_URL` no `.env`. Instala Docker, UFW (só 22/80/443), Fail2ban e atualizações automáticas.",
-    "3. Suba o proxy: `docker compose up -d` — o compose lê `DOMAIN`/`PUBLIC_URL` do `.env` (sem `.env` válido ele para e avisa) e o Caddy emite o certificado Let's Encrypt sozinho.",
-    "4. No painel, abra **Agentes → Domínio do servidor** e confira o mesmo domínio informado na VPS. O instalador do agente (.exe) também **pergunta o servidor na hora da instalação** e grava a resposta em `config.json` — nenhum agente sai com domínio embutido.",
-    "5. Agende o backup: `0 3 * * * /opt/rmm/backup.sh` (guarda 14 dias).",
-    "Detalhes completos, Nginx alternativo e checklist de segurança estão na aba **VPS & Segurança** do painel.",
+    "---",
+    "",
+    "## Instalação do sistema na VPS Linux — passo a passo completo",
+    "",
+    "### Pré-requisitos",
+    "- VPS Linux **Ubuntu 22.04/24.04** ou **Debian 12** com **IP público** e acesso root (ou sudo)",
+    "- Um **domínio ou subdomínio** seu (ex.: `painel.suaempresa.com.br`) — você informa o domínio no instalador da VPS; ele não fica fixo no código",
+    "- Portas **22, 80 e 443** liberadas no painel da provedora da VPS (firewall da nuvem), se houver",
+    "",
+    "### Passo 1 — Aponte o DNS para a VPS",
+    "No provedor do seu domínio (Registro.br, Cloudflare, etc.), crie um registro:",
+    "```",
+    "Tipo: A    Nome: painel (ou o subdomínio escolhido)    Valor: <IP público da VPS>    TTL: 300",
+    "```",
+    "Aguarde a propagação e confira de qualquer máquina:",
+    "```bash",
+    "ping painel.suaempresa.com.br   # deve responder com o IP da VPS",
+    "```",
+    "",
+    "### Passo 2 — Acesse a VPS e baixe o projeto",
+    "```bash",
+    "ssh root@<IP-DA-VPS>",
+    "apt-get update && apt-get install -y git",
+    "git clone https://github.com/andybq123/rmm.git",
+    "cd rmm",
+    "```",
+    "",
+    "### Passo 3 — Rode o instalador da VPS (ele pergunta o domínio)",
+    "```bash",
+    "sudo bash deploy/install-vps.sh",
+    "# → ele pergunta: \"Domínio do sistema (sem https://):\" — digite painel.suaempresa.com.br",
+    "```",
+    "Sem interação (automatizado), qualquer uma das formas funciona:",
+    "```bash",
+    "sudo bash deploy/install-vps.sh painel.suaempresa.com.br",
+    "sudo DOMAIN=painel.suaempresa.com.br bash deploy/install-vps.sh",
+    "```",
+    "O que o instalador faz por você:",
+    "- Valida o domínio e grava `DOMAIN`, `PUBLIC_URL=https://<domínio>` e `RMM_SERVER_URL=https://<domínio>/actions` no arquivo `.env` (permissão 600) + gera um `SESSION_SECRET` aleatório",
+    "- Instala **Docker** (se faltar), **UFW** liberando só **22/80/443**, **Fail2ban** e **atualizações automáticas** de segurança",
+    "",
+    "### Passo 4 — Suba o sistema com HTTPS automático",
+    "```bash",
+    "docker compose up -d",
+    "docker compose ps        # o serviço rmm-caddy deve estar \"Up\"",
+    "docker compose logs -f caddy   # acompanhe a emissão do certificado Let's Encrypt (Ctrl+C sai)",
+    "```",
+    "O `docker-compose.yml` lê `DOMAIN`/`PUBLIC_URL` do `.env` — sem `.env` válido ele para e avisa, de propósito. O Caddy pede e renova o certificado sozinho.",
+    "",
+    "### Passo 5 — Teste de fora da VPS",
+    "```bash",
+    "curl -I https://painel.suaempresa.com.br   # esperado: HTTP/2 200 (ou 30x para a tela do app)",
+    "```",
+    "Abra `https://painel.suaempresa.com.br` no navegador.",
+    "",
+    "### Passo 6 — Crie o primeiro administrador",
+    "Na primeira abertura, o painel mostra **Configuração inicial**: nome, e-mail e senha (mín. 8 caracteres) do primeiro **Administrador**. Depois disso, o acesso é pela tela de login; crie os demais usuários em **Usuários**.",
+    "",
+    "### Passo 7 — Crie o site e gere o instalador do agente (estilo Tactical RMM)",
+    "1. No painel, abra **Agentes → 1 · Criar o site**: dê um nome ao site (ex.: `Matriz`) e informe o domínio público com `https://` (o mesmo da VPS). Salve.",
+    "2. Em **Agentes → 2 · Gerar o instalador Windows (.exe)**, clique em **Gerar pacote do instalador** e baixe os 4 arquivos gerados (`rmm-agent.py`, `config.json`, `build-exe.ps1`, `RmmAgent.iss`) — eles já nascem com **domínio, site e token embutidos**.",
+    "3. Numa máquina Windows de build (uma vez só por site): instale Python 3.11+ e Inno Setup 6, coloque os 4 arquivos na mesma pasta e rode:",
+    "   ```powershell",
+    "   powershell -ExecutionPolicy Bypass -File .\\build-exe.ps1   # gera dist\\RmmAgent.exe (PyInstaller)",
+    "   iscc RmmAgent.iss                                          # gera o instalador final",
+    "   ```",
+    "4. Distribua o `RmmAgent-Setup-<site>.exe` gerado: em cada computador Windows, **só executar como administrador e instalar** — não pede domínio nem token; o agente instala como serviço e aparece no painel em até 1 minuto.",
+    "5. **Linux:** baixe o script Bash na mesma aba Agentes (também já sai apontando para o site) e rode `sudo bash rmm-agent-linux.sh`, ou use o serviço `deploy/rmm-agent.service`.",
+    "",
+    "### Passo 8 — Backup diário do banco",
+    "```bash",
+    "chmod +x deploy/backup.sh",
+    "( crontab -l 2>/dev/null; echo \"0 3 * * * $(pwd)/deploy/backup.sh\" ) | crontab -",
+    "# guarda cópias de app.db por 14 dias em backups/",
+    "```",
+    "",
+    "### Atualizar o sistema na VPS",
+    "```bash",
+    "cd rmm",
+    "git pull --ff-only",
+    "docker compose up -d --build",
+    "```",
+    "",
+    "### Problemas comuns",
+    "- **Certificado não emite:** confira se o registro A aponta para esta VPS e se as portas 80/443 estão liberadas na provedora; veja `docker compose logs caddy`.",
+    "- **502 no navegador:** o app interno (porta 3000) não subiu — confira os serviços e reinicie com `docker compose restart`.",
+    "- **Agente não aparece no painel:** na máquina, confira o serviço `RmmAgent` em execução e se `https://<domínio>/actions` responde; gere o instalador de novo se trocou o domínio ou rotacionou o token.",
+    "",
+    "---",
     "",
     "## Agentes",
-    "- **Windows (.exe):** gere com `agent/windows/build-exe.ps1` (PyInstaller sobre o agente Python) e o instalador com `agent/windows/RmmAgent.iss` (Inno Setup). O usuário final só baixa o `RmmAgent-Setup.exe` e instala como administrador; o agente roda como serviço e aponta para o seu domínio.",
-    "- **Linux:** script Bash + serviço systemd (`deploy/rmm-agent.service`).",
-    "- **Alternativas 100% open source compatíveis com a ideia de .exe:** MeshCentral Agent e TacticalRMM Agent distribuem instalador .exe próprio — veja a comparação honesta na aba Agentes do painel antes de trocar a stack.",
+    "- **Windows (.exe) — fluxo principal:** site criado no painel → **Gerar pacote do instalador** na aba Agentes → compilar uma vez com `agent/windows/build-exe.ps1` (PyInstaller) + `agent/windows/RmmAgent.iss` (Inno Setup). O instalador final já vem com site, domínio e token pré-configurados — o usuário final só executa e instala.",
+    "- **Linux:** script Bash gerado na aba Agentes (já com o site embutido) + serviço systemd (`deploy/rmm-agent.service`).",
+    "- Trocar de domínio ou rotacionar o token exige **gerar um novo instalador** no painel e redistribuir — é o mesmo comportamento do Tactical RMM.",
     "",
     "## Segurança (exposição pública)",
-    "- **Só HTTPS** no domínio público (Caddy/Let's Encrypt ou Nginx+Certbot) — agentes recusam URL sem https quando há domínio configurado",
+    "- **Só HTTPS** no domínio público (Caddy/Let's Encrypt ou Nginx+Certbot) — o site do painel deve ser `https://`",
     "- Senhas com PBKDF2-SHA256 (100 mil iterações) + salt individual — nunca em texto puro",
-    "- Agentes autenticados por agentToken próprio por máquina; cadastro exige enrollment token (rotacionável pelo admin)",
+    "- Agentes autenticados por agentToken próprio por máquina; cadastro exige enrollment token (rotacionável pelo admin) embutido no instalador gerado",
     "- Firewall UFW: apenas 22 (SSH por chave), 80 e 443 abertos; Fail2ban no SSH; painel nunca exposto sem proxy",
-    "- Nunca commite app.db, tokens ou senhas neste repositório",
+    "- Nunca commite app.db, .env, tokens ou senhas neste repositório",
     "",
   ].join("\n");
 }
@@ -302,14 +385,15 @@ User=root
 
 [Install]
 WantedBy=multi-user.target
-${actionsUrl ? `\n# Domínio atualmente salvo no painel (referência): ${actionsUrl}` : "# Nenhum domínio salvo no painel ainda — o agente pergunta na instalação."}
+${actionsUrl ? `\n# Domínio atualmente salvo no painel (referência): ${actionsUrl}` : "# Nenhum site salvo no painel ainda — crie o site em Agentes; os agentes gerados já vêm com ele embutido."}
 `;
   const innoSetup = `; Inno Setup — gera o instalador RmmAgent-Setup.exe (Windows)
 ; Compile com Inno Setup 6: iscc agent\\windows\\RmmAgent.iss
 ; Antes: gere o exe com PyInstaller (ver agent/windows/build-exe.ps1)
-; IMPORTANTE: nenhum domínio vai embutido. O instalador PERGUNTA o
-; domínio/servidor na tela "Servidor RMM" e grava a resposta em
-; {commonappdata}\\RmmAgent\\config.json — é de lá que o agente lê.
+; FLUXO TACTICAL: este instalador é GERADO a partir do site salvo no painel.
+; O config.json ao lado (gerado junto, com serverUrl/token do site) é
+; empacotado e copiado para {commonappdata}\\RmmAgent\\config.json —
+; quem instala NÃO digita domínio nenhum: só executa e instala.
 #define MyAppName "RMM Agent"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "RMM Console"
@@ -326,68 +410,122 @@ SolidCompression=yes
 PrivilegesRequired=admin
 [Files]
 Source: "dist\\RmmAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "config.json"; DestDir: "{commonappdata}\\RmmAgent"; Flags: ignoreversion
 [Run]
 Filename: "{app}\\RmmAgent.exe"; Parameters: "--install-service"; Flags: runhidden waituntilterminated; StatusMsg: "Instalando serviço do agente..."
 Filename: "{app}\\RmmAgent.exe"; Parameters: "--start-service"; Flags: runhidden waituntilterminated
 [UninstallRun]
 Filename: "{app}\\RmmAgent.exe"; Parameters: "--remove-service"; Flags: runhidden waituntilterminated
-[Code]
-var ServerPage: TInputQueryWizardPage;
-procedure InitializeWizard;
-begin
-  ServerPage := CreateInputQueryPage(wpSelectDir,
-    'Servidor RMM', 'Para qual servidor este agente vai enviar os dados?',
-    'Informe o domínio do seu painel RMM (o mesmo configurado na VPS). ' +
-    'Nada fica fixo no instalador: cada instalação pode apontar para um servidor diferente.');
-  ServerPage.Add('Domínio / URL do servidor:', False);
-  { Pré-preenche só se quem gerou o instalador passou /SERVER=... na linha de comando }
-  ServerPage.Values[0] := ExpandConstant('{param:SERVER|}');
-end;
-function NextButtonClick(CurPageID: Integer): Boolean;
-var V: String;
-begin
-  Result := True;
-  if CurPageID = ServerPage.ID then begin
-    V := Trim(ServerPage.Values[0]);
-    if V = '' then begin
-      MsgBox('Informe o domínio do servidor RMM para continuar.', mbError, MB_OK);
-      Result := False;
-    end;
-  end;
-end;
-procedure CurStepChanged(CurStep: TSetupStep);
-var Url: String;
-begin
-  if CurStep = ssPostInstall then begin
-    Url := Trim(ServerPage.Values[0]);
-    if (Pos('http://', Url) <> 1) and (Pos('https://', Url) <> 1) then Url := 'https://' + Url;
-    StringChangeEx(Url, ' ', '', True);
-    if Copy(Url, Length(Url), 1) = '/' then Delete(Url, Length(Url), 1);
-    if Pos('/actions', Url) = 0 then Url := Url + '/actions';
-    ForceDirectories(ExpandConstant('{commonappdata}\\RmmAgent'));
-    SaveStringToFile(ExpandConstant('{commonappdata}\\RmmAgent\\config.json'),
-      '{' + #13#10 + '  "serverUrl": "' + Url + '",' + #13#10 + '  "intervalSeconds": 60' + #13#10 + '}', False);
-  end;
-end;
+${domain ? `; Site pré-configurado neste instalador: ${domain} (${actionsUrl})` : "; Nenhum site salvo no painel ainda — crie o site em Agentes antes de gerar o instalador."}
 `;
   const buildExePs1 = `# Gera RmmAgent.exe a partir do agente Python (open source, sem custo)
 # Requisitos na máquina de build (Windows): Python 3.11+ e pip
 # Uso: powershell -ExecutionPolicy Bypass -File build-exe.ps1
-# NENHUM domínio é embutido no .exe: quem instala informa o servidor
-# na tela do instalador (Inno Setup), que grava config.json em
-# %ProgramData%\\RmmAgent — o agente lê o servidor desse arquivo.
+# FLUXO TACTICAL: rode na MESMA pasta onde estão rmm-agent.py e o
+# config.json gerados pelo painel (site + domínio + token já embutidos).
+# O Inno Setup empacota o config.json junto — o instalador final não
+# pergunta nada a quem instala.
 $ErrorActionPreference = "Stop"
+if (-not (Test-Path "config.json")) { throw "config.json não encontrado nesta pasta. Baixe o pacote completo em Agentes > Gerar instalador no painel." }
+if (-not (Test-Path "rmm-agent.py")) { throw "rmm-agent.py não encontrado nesta pasta. Baixe o pacote completo em Agentes > Gerar instalador no painel." }
 pip install --upgrade pyinstaller psutil
-# O agente fonte é o rmm-agent.py baixado na aba Agentes do painel
 pyinstaller --onefile --noconsole --name RmmAgent rmm-agent.py
 Write-Host "Pronto: dist\\RmmAgent.exe — assine com signtool se tiver certificado de código."
 Write-Host "Sem certificado, o Windows SmartScreen pode avisar na primeira instalação."
-Write-Host "Compile depois o instalador: iscc RmmAgent.iss  (ele pergunta o domínio na instalação)"
+Write-Host "Compile depois o instalador pré-configurado: iscc RmmAgent.iss"
 `;
-  const agentConfigJson = JSON.stringify({ serverUrl: actionsUrl, _instrucao: "Modelo apenas. No instalador .exe este arquivo é GERADO na hora, com o domínio que a pessoa digitar na tela do instalador — não distribua com domínio fixo.", intervalSeconds: 60 }, null, 2);
+  const agentConfigJson = JSON.stringify({ serverUrl: actionsUrl, _instrucao: "Modelo. O config.json REAL é gerado pelo painel em Agentes > Gerar instalador, já com o site/domínio/token do site — esse é o arquivo que vai dentro do instalador .exe.", intervalSeconds: 60 }, null, 2);
   return { dockerCompose, caddyfile, nginxConf, envExample, installScript, backupScript, systemdService, innoSetup, buildExePs1, agentConfigJson, domain, actionsUrl };
 }
 
+
+function buildInstallerFiles(publicUrl: string, enrollmentToken: string, siteName: string) {
+  const actionsUrl = actionsUrlFromPublic(publicUrl);
+  const domain = domainFromPublic(publicUrl);
+  const site = siteName.trim() || domain || "site";
+  const slug = site.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "site";
+  const configJson = JSON.stringify({ serverUrl: actionsUrl, enrollmentToken, siteName: site, intervalSeconds: 60 }, null, 2);
+  const innoSetup = `; ============================================================
+;  RmmAgent.iss — instalador GERADO pelo painel RMM
+;  Site: ${site}
+;  Servidor pré-configurado: ${actionsUrl}
+;  Quem recebe o instalador final só executa e instala —
+;  nenhum domínio ou token é pedido na instalação.
+;  Compile com Inno Setup 6:  iscc RmmAgent.iss
+;  Antes, gere o exe: powershell -ExecutionPolicy Bypass -File build-exe.ps1
+; ============================================================
+#define MyAppName "RMM Agent"
+#define MyAppVersion "1.0.0"
+#define MyAppPublisher "RMM Console"
+[Setup]
+AppId={{8F3A2B10-1C4D-4E5F-9A6B-RMMAGENT01}}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppInfoDescription=Agente RMM — site ${site} (${domain})
+DefaultDirName={autopf}\\RmmAgent
+DefaultGroupName={#MyAppName}
+OutputBaseFilename=RmmAgent-Setup-${slug}
+Compression=lzma
+SolidCompression=yes
+PrivilegesRequired=admin
+[Files]
+Source: "dist\\RmmAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "config.json"; DestDir: "{commonappdata}\\RmmAgent"; Flags: ignoreversion
+[Run]
+Filename: "{app}\\RmmAgent.exe"; Parameters: "--install-service"; Flags: runhidden waituntilterminated; StatusMsg: "Instalando serviço do agente..."
+Filename: "{app}\\RmmAgent.exe"; Parameters: "--start-service"; Flags: runhidden waituntilterminated
+[UninstallRun]
+Filename: "{app}\\RmmAgent.exe"; Parameters: "--remove-service"; Flags: runhidden waituntilterminated
+`;
+  const buildExePs1 = `# ============================================================
+#  build-exe.ps1 — GERADO pelo painel RMM (site: ${site})
+#  Servidor pré-configurado: ${actionsUrl}
+#  Rode NESTA pasta, com rmm-agent.py + config.json + RmmAgent.iss juntos.
+#  Requisitos (máquina de build Windows): Python 3.11+ e Inno Setup 6.
+# ============================================================
+$ErrorActionPreference = "Stop"
+if (-not (Test-Path "config.json")) { throw "Falta o config.json gerado pelo painel nesta pasta." }
+if (-not (Test-Path "rmm-agent.py")) { throw "Falta o rmm-agent.py gerado pelo painel nesta pasta." }
+pip install --upgrade pyinstaller psutil
+pyinstaller --onefile --noconsole --name RmmAgent rmm-agent.py
+Write-Host "OK: dist\\RmmAgent.exe"
+Write-Host "Agora compile o instalador final (já pré-configurado): iscc RmmAgent.iss"
+Write-Host "Resultado: RmmAgent-Setup-${slug}.exe — distribua este arquivo; quem instala só executa."
+`;
+  const instructions = [
+    `INSTALADOR DO AGENTE — SITE "${site.toUpperCase()}"`,
+    `Servidor pré-configurado: ${actionsUrl}`,
+    "",
+    "Este pacote foi gerado pelo painel (Agentes > Gerar instalador).",
+    "Todos os arquivos já contêm o site, o domínio e o token de matrícula —",
+    "o instalador final NÃO pede nenhuma configuração a quem instala.",
+    "",
+    "GERAR O .EXE (uma vez por site, numa máquina Windows de build):",
+    "  1) Instale Python 3.11+ (python.org) e Inno Setup 6 (jrsoftware.org).",
+    "  2) Coloque estes 4 arquivos na MESMA pasta:",
+    "       rmm-agent.py   config.json   build-exe.ps1   RmmAgent.iss",
+    "  3) Gere o executável do agente:",
+    "       powershell -ExecutionPolicy Bypass -File .\\build-exe.ps1",
+    "  4) Compile o instalador final:",
+    "       iscc RmmAgent.iss",
+    `  5) Pronto: RmmAgent-Setup-${slug}.exe`,
+    "",
+    "DISTRIBUIR:",
+    `  Envie só o RmmAgent-Setup-${slug}.exe para as máquinas do site.`,
+    "  Em cada computador Windows: executar como administrador > Instalar.",
+    "  Nada é perguntado — o agente instala como serviço, já apontando para",
+    `  ${actionsUrl}, e a máquina aparece no painel em até 1 minuto.`,
+    "",
+    "IMPORTANTE:",
+    "  - Se trocar o domínio do site ou rotacionar o token no painel,",
+    "    gere um NOVO pacote e redistribua (instaladores antigos apontam",
+    "    para a configuração anterior — mesmo comportamento do Tactical RMM).",
+    "  - Sem certificado de assinatura de código, o SmartScreen pode avisar",
+    "    na primeira instalação (Mais informações > Executar assim mesmo).",
+  ].join("\n");
+  return { configJson, innoSetup, buildExePs1, instructions, siteName: site, siteSlug: slug, installerFileName: `RmmAgent-Setup-${slug}.exe`, domain, actionsUrl };
+}
 
 type DeviceRow = typeof schema.devices.$inferSelect;
 
@@ -464,22 +602,14 @@ function buildScripts(enrollmentToken: string, publicUrl = "") {
 # ============================================================
 set -euo pipefail
 
-# >>> Servidor: NENHUM domínio fixo. Ordem: variável RMM_SERVER_URL >
-# >>> config gravada na instalação > PROMPT perguntando o domínio.
-# >>> Pré-configurado pelo painel (se o admin salvou um domínio): ${hasServer ? resolvedActionsUrl : "(nenhum — será perguntado)"}
+# >>> Servidor PRÉ-CONFIGURADO pelo painel (site criado em Agentes):
+# >>> ${hasServer ? resolvedActionsUrl : "(nenhum site salvo — crie o site no painel e baixe o script de novo)"}
+# >>> A variável RMM_SERVER_URL, se definida, sobrescreve (uso avançado).
 SERVER_URL="\${RMM_SERVER_URL:-${resolvedActionsUrl}}"
-if [ -z "$SERVER_URL" ] && [ -f "/opt/rmm-agent/agent.env" ]; then
-  SERVER_URL=$(grep -E '^RMM_SERVER_URL=' /opt/rmm-agent/agent.env | cut -d= -f2- || true)
-fi
 if [ -z "$SERVER_URL" ]; then
-  read -rp "Domínio/URL do servidor RMM (ex.: https://painel.minhaempresa.com): " _INFORMADO
-  _INFORMADO=$(echo "$_INFORMADO" | tr -d ' ')
-  case "$_INFORMADO" in http*) ;; *) _INFORMADO="https://$_INFORMADO";; esac
-  _INFORMADO="\${_INFORMADO%/}"
-  case "$_INFORMADO" in */actions) SERVER_URL="$_INFORMADO";; *) SERVER_URL="$_INFORMADO/actions";; esac
-  mkdir -p /opt/rmm-agent
-  echo "RMM_SERVER_URL=$SERVER_URL" > /opt/rmm-agent/agent.env
-  echo "[rmm-agent] Servidor gravado em /opt/rmm-agent/agent.env: $SERVER_URL"
+  echo "[rmm-agent] ERRO: nenhum servidor embutido neste script." >&2
+  echo "[rmm-agent] Crie o site em Agentes no painel e baixe o script novamente — ele já vem pré-configurado." >&2
+  exit 1
 fi
 ENROLLMENT_TOKEN="${enrollmentToken}"
 INTERVAL=60
@@ -581,25 +711,10 @@ while true; do report_metrics || echo "[rmm-agent] falha no envio, tentando de n
 # ============================================================
 $ErrorActionPreference = "SilentlyContinue"
 
-# >>> Servidor: NENHUM domínio fixo. Ordem: $env:RMM_SERVER_URL >
-# >>> config.json (gravado pelo instalador .exe, que pergunta o domínio) > PROMPT.
-# >>> Pré-configurado pelo painel (se o admin salvou um domínio): ${hasServer ? resolvedActionsUrl : "(nenhum — será perguntado)"}
+# >>> Servidor PRÉ-CONFIGURADO pelo painel (site criado em Agentes): ${hasServer ? resolvedActionsUrl : "(nenhum site salvo — crie o site no painel e baixe de novo)"}
+# >>> $env:RMM_SERVER_URL sobrescreve (uso avançado). Sem prompt: o script já nasce apontando para o site.
 $ServerUrl       = if ($env:RMM_SERVER_URL) { $env:RMM_SERVER_URL } else { "${resolvedActionsUrl}" }
-if (-not $ServerUrl) {
-  $cfgPath = "$env:ProgramData\\RmmAgent\\config.json"
-  if (Test-Path $cfgPath) { try { $ServerUrl = (Get-Content $cfgPath | ConvertFrom-Json).serverUrl } catch {} }
-}
-if (-not $ServerUrl) {
-  $typed = Read-Host "Informe o domínio/URL do servidor RMM (ex.: https://painel.minhaempresa.com)"
-  $typed = $typed.Trim()
-  if ($typed -notmatch '^https?://') { $typed = "https://$typed" }
-  $typed = $typed.TrimEnd('/')
-  if ($typed -notmatch '/actions$') { $typed = "$typed/actions" }
-  $ServerUrl = $typed
-  New-Item -ItemType Directory -Force -Path "$env:ProgramData\\RmmAgent" | Out-Null
-  @{ serverUrl = $ServerUrl; intervalSeconds = 60 } | ConvertTo-Json | Set-Content "$env:ProgramData\\RmmAgent\\config.json"
-  Write-Host "[rmm-agent] Servidor gravado em config.json: $ServerUrl"
-}
+if (-not $ServerUrl) { throw "[rmm-agent] Nenhum servidor embutido. Crie o site em Agentes no painel e baixe o script novamente." }
 $EnrollmentToken = "${enrollmentToken}"
 $Interval        = 60
 $AgentVersion    = "1.0.0"
@@ -697,14 +812,13 @@ Sem RMM_SERVER_URL nem config.json, o agente PERGUNTA o servidor na 1a execuçã
 import json, os, platform, socket, subprocess, sys, time, urllib.request
 
 SERVER_URL = os.environ.get("RMM_SERVER_URL", "${resolvedActionsUrl}")
-# Servidor: NENHUM domínio fixo no código. Ordem de resolução:
-# 1) variável RMM_SERVER_URL  2) config.json gravado PELO INSTALADOR .exe,
-#    que pergunta o domínio na hora da instalação (%ProgramData%/RmmAgent
-#    ou ao lado do executável)  3) prompt interativo na primeira execução.
+# Servidor PRÉ-CONFIGURADO: este arquivo é gerado pelo painel DEPOIS que o
+# site é criado (Agentes) — SERVER_URL e o token já vêm embutidos, como no
+# instalador do Tactical RMM. O config.json que o instalador .exe grava em
+# %ProgramData%/RmmAgent (também gerado pelo painel, com o mesmo site)
+# tem prioridade quando existe. SEM prompt interativo.
 def _resolve_server_url():
     global SERVER_URL
-    if SERVER_URL:
-        return SERVER_URL
     import pathlib as _p
     candidates = []
     _pd = os.environ.get("ProgramData")
@@ -722,24 +836,9 @@ def _resolve_server_url():
                     return SERVER_URL
         except Exception:
             continue
-    try:
-        _typed = input("Informe o domínio/URL do servidor RMM (ex.: https://painel.minhaempresa.com): ").strip()
-    except EOFError:
-        _typed = ""
-    if not _typed:
-        raise SystemExit("[rmm-agent] Servidor não configurado. O instalador pergunta o domínio na instalação; ou defina RMM_SERVER_URL / config.json com serverUrl.")
-    if not _typed.startswith(("http://", "https://")): _typed = "https://" + _typed
-    _typed = _typed.rstrip("/")
-    if not _typed.endswith("/actions"): _typed += "/actions"
-    SERVER_URL = _typed
-    try:
-        _dest = candidates[0]
-        _dest.parent.mkdir(parents=True, exist_ok=True)
-        _dest.write_text(json.dumps({"serverUrl": SERVER_URL, "intervalSeconds": 60}, indent=2))
-        print(f"[rmm-agent] Servidor gravado em {_dest}: {SERVER_URL}")
-    except Exception:
-        pass
-    return SERVER_URL
+    if SERVER_URL:
+        return SERVER_URL
+    raise SystemExit("[rmm-agent] Servidor não configurado neste arquivo. Gere o agente/instalador a partir do site criado em Agentes no painel — ele já vem pré-configurado.")
 _resolve_server_url()
 ENROLLMENT_TOKEN = "${enrollmentToken}"
 INTERVAL = 60
@@ -1029,10 +1128,11 @@ export const Actions = {
   }),
 
   getEnrollment: defineAction({
-    description: "Retorna o token de matrícula e os scripts reais dos agentes Windows, Linux e Python, já apontando para o domínio público configurado. Requer sessão.",
+    description: "Retorna o site configurado (nome + domínio), o token de matrícula e os scripts reais dos agentes Windows, Linux e Python, já pré-configurados com o site. Requer sessão.",
     request: z.object({ sessionToken: z.string().default("") }),
     response: z.object({
       enrollmentToken: z.string(),
+      siteName: z.string(),
       publicUrl: z.string(),
       actionsUrl: z.string(),
       linuxSh: z.string(),
@@ -1050,32 +1150,66 @@ export const Actions = {
       }
       const pubRows = await db.select().from(schema.settings).where(eq(schema.settings.key, "public_url")).limit(1);
       const publicUrl = pubRows[0]?.value ?? "";
+      const nameRows = await db.select().from(schema.settings).where(eq(schema.settings.key, "site_name")).limit(1);
+      const siteName = nameRows[0]?.value ?? "";
       const scripts = buildScripts(token, publicUrl);
-      return { enrollmentToken: token, publicUrl, actionsUrl: actionsUrlFromPublic(publicUrl), ...scripts };
+      return { enrollmentToken: token, siteName, publicUrl, actionsUrl: actionsUrlFromPublic(publicUrl), ...scripts };
     },
   }),
 
-  getSystemConfig: defineAction({
-    description: "Retorna a configuração do servidor: domínio/URL pública usada pelos agentes e status de segurança básico.",
+  getInstallerPackage: defineAction({
+    description: "Gera o pacote do instalador Windows (.exe) pré-configurado com o site salvo (domínio + token embutidos, estilo Tactical RMM): agente Python, config.json, build-exe.ps1, RmmAgent.iss e instruções. Exige site com domínio https salvo. Requer sessão.",
     request: z.object({ sessionToken: z.string().default("") }),
-    response: z.object({ publicUrl: z.string(), actionsUrl: z.string(), usesHttps: z.boolean(), hasEnrollmentToken: z.boolean() }),
+    response: z.object({
+      ready: z.boolean(), siteName: z.string(), domain: z.string(), actionsUrl: z.string(),
+      installerFileName: z.string(), agentPy: z.string(), configJson: z.string(),
+      innoSetup: z.string(), buildExePs1: z.string(), instructions: z.string(),
+    }),
     async handler(ctx, args) {
       await requireAuth(ctx, args.sessionToken);
       const db = ctx.db<typeof schema>();
       const pub = await db.select().from(schema.settings).where(eq(schema.settings.key, "public_url")).limit(1);
+      const publicUrl = pub[0]?.value ?? "";
+      const nam = await db.select().from(schema.settings).where(eq(schema.settings.key, "site_name")).limit(1);
+      const siteName = nam[0]?.value ?? "";
+      const tRows = await db.select().from(schema.settings).where(eq(schema.settings.key, "enrollment_token")).limit(1);
+      let token = tRows[0]?.value;
+      if (!token) {
+        token = `rmm_${randHex(16)}`;
+        await db.insert(schema.settings).values({ key: "enrollment_token", value: token });
+      }
+      const actionsUrl = actionsUrlFromPublic(publicUrl);
+      if (!actionsUrl) {
+        return { ready: false, siteName, domain: "", actionsUrl: "", installerFileName: "", agentPy: "", configJson: "", innoSetup: "", buildExePs1: "", instructions: "Crie o site primeiro: informe o nome e o domínio (https://...) e salve. Depois gere o instalador — ele já sai pré-configurado com esse site." };
+      }
+      const files = buildInstallerFiles(publicUrl, token, siteName);
+      const scripts = buildScripts(token, publicUrl);
+      return { ready: true, siteName: files.siteName, domain: files.domain, actionsUrl, installerFileName: files.installerFileName, agentPy: scripts.pythonPy, configJson: files.configJson, innoSetup: files.innoSetup, buildExePs1: files.buildExePs1, instructions: files.instructions };
+    },
+  }),
+
+  getSystemConfig: defineAction({
+    description: "Retorna a configuração do site: nome, domínio/URL pública usada pelos agentes e status básico.",
+    request: z.object({ sessionToken: z.string().default("") }),
+    response: z.object({ siteName: z.string(), publicUrl: z.string(), actionsUrl: z.string(), usesHttps: z.boolean(), hasEnrollmentToken: z.boolean() }),
+    async handler(ctx, args) {
+      await requireAuth(ctx, args.sessionToken);
+      const db = ctx.db<typeof schema>();
+      const pub = await db.select().from(schema.settings).where(eq(schema.settings.key, "public_url")).limit(1);
+      const nam = await db.select().from(schema.settings).where(eq(schema.settings.key, "site_name")).limit(1);
       const enr = await db.select().from(schema.settings).where(eq(schema.settings.key, "enrollment_token")).limit(1);
       const publicUrl = pub[0]?.value ?? "";
-      return { publicUrl, actionsUrl: actionsUrlFromPublic(publicUrl), usesHttps: publicUrl.startsWith("https://"), hasEnrollmentToken: !!enr[0]?.value };
+      return { siteName: nam[0]?.value ?? "", publicUrl, actionsUrl: actionsUrlFromPublic(publicUrl), usesHttps: publicUrl.startsWith("https://"), hasEnrollmentToken: !!enr[0]?.value };
     },
   }),
 
   updateSystemConfig: defineAction({
-    description: "Salva o domínio/URL pública do painel informado pelo administrador (nenhum domínio é fixo no código). Apenas administradores. Serve de pré-preenchimento; o instalador do agente também pergunta o servidor na instalação.",
-    request: z.object({ sessionToken: z.string().default(""), publicUrl: z.string().trim().max(300).default("") }),
-    response: z.object({ ok: z.literal(true), publicUrl: z.string(), actionsUrl: z.string() }),
-    async handler(ctx, args): Promise<{ ok: true; publicUrl: string; actionsUrl: string }> {
+    description: "Cria/atualiza o site do painel (nome + domínio público) — é este site que o instalador .exe gerado carrega pré-configurado. Apenas administradores.",
+    request: z.object({ sessionToken: z.string().default(""), publicUrl: z.string().trim().max(300).default(""), siteName: z.string().trim().max(80).default("") }),
+    response: z.object({ ok: z.literal(true), siteName: z.string(), publicUrl: z.string(), actionsUrl: z.string() }),
+    async handler(ctx, args): Promise<{ ok: true; siteName: string; publicUrl: string; actionsUrl: string }> {
       const me = await requireAuth(ctx, args.sessionToken);
-      if (me.role !== "admin") throw new Error("Apenas administradores podem alterar o domínio do servidor.");
+      if (me.role !== "admin") throw new Error("Apenas administradores podem alterar o site do servidor.");
       const cleaned = normalizePublicUrl(args.publicUrl);
       if (cleaned && !/^https?:\/\//i.test(cleaned)) throw new Error("Informe a URL completa, começando com https:// (recomendado) ou http:// para testes locais.");
       if (cleaned && cleaned.includes(" ")) throw new Error("URL inválida: não pode conter espaços.");
@@ -1083,8 +1217,11 @@ export const Actions = {
       const rows = await db.select().from(schema.settings).where(eq(schema.settings.key, "public_url")).limit(1);
       if (rows[0]) await db.update(schema.settings).set({ value: cleaned }).where(eq(schema.settings.key, "public_url"));
       else await db.insert(schema.settings).values({ key: "public_url", value: cleaned });
+      const nameRows = await db.select().from(schema.settings).where(eq(schema.settings.key, "site_name")).limit(1);
+      if (nameRows[0]) await db.update(schema.settings).set({ value: args.siteName }).where(eq(schema.settings.key, "site_name"));
+      else await db.insert(schema.settings).values({ key: "site_name", value: args.siteName });
       ctx.invalidateQueries();
-      return { ok: true, publicUrl: cleaned, actionsUrl: actionsUrlFromPublic(cleaned) };
+      return { ok: true, siteName: args.siteName, publicUrl: cleaned, actionsUrl: actionsUrlFromPublic(cleaned) };
     },
   }),
 
@@ -1124,12 +1261,12 @@ export const Actions = {
       const usesHttps = publicUrl.startsWith("https://");
       const hasDomain = !!publicUrl && !publicUrl.includes("localhost") && !publicUrl.includes("<");
       const checks = [
-        { id: "https", ok: usesHttps, title: "Domínio público com HTTPS", detail: usesHttps ? `Agentes apontam para ${actionsUrlFromPublic(publicUrl)}` : "Configure o domínio em Agentes/VPS e sirva só via HTTPS (Caddy ou Nginx+Certbot). Sem HTTPS, tokens trafegam em texto puro." },
+        { id: "https", ok: usesHttps, title: "Domínio público com HTTPS", detail: usesHttps ? `Agentes apontam para ${actionsUrlFromPublic(publicUrl)}` : "Crie o site em Agentes com o domínio em https:// e sirva só via HTTPS (Caddy ou Nginx+Certbot). Sem HTTPS, tokens trafegam em texto puro." },
         { id: "admin", ok: users.length >= 1, title: "Administrador criado e senhas com hash", detail: "Senhas PBKDF2-SHA256 + salt; sessões de 7 dias. Troque senhas fracas e desative usuários que saírem da equipe." },
         { id: "enrollment", ok: true, title: "Matrícula protegida por token", detail: "Só máquinas com o enrollment token se cadastram; cada máquina recebe um agentToken próprio. Rotacione o token se ele vazar." },
         { id: "firewall", ok: false, title: "Firewall da VPS (manual)", detail: "Na VPS: UFW liberando só 22/80/443, SSH por chave, Fail2ban ativo — o script deploy/install-vps.sh já configura isso." },
         { id: "backup", ok: false, title: "Backup do banco (manual)", detail: "Agende deploy/backup.sh no cron (diário, retenção de 14 dias) e teste a restauração. O app.db concentra usuários e tokens." },
-        { id: "proxy", ok: false, title: "Proxy reverso na frente (manual)", detail: "Nunca exponha a porta interna do app direto na internet: Caddy/Nginx na 443 com HSTS e headers de segurança (arquivos na aba VPS)." },
+        { id: "proxy", ok: false, title: "Proxy reverso na frente (manual)", detail: "Nunca exponha a porta interna do app direto na internet: Caddy/Nginx na 443 com HSTS e headers de segurança (passo a passo de instalação no README do repositório no GitHub)." },
       ];
       return { publicUrl, usesHttps, hasDomain, userCount: users.length, deviceCount: devices.length, checks };
     },
@@ -1571,7 +1708,7 @@ export const Actions = {
         "# 1) Na pasta do projeto (ts-spaces/rmm-monitor-de-computadores):",
         "git init",
         "git add .",
-        'git commit -m "feat: RMM com login, VPS (Docker/Caddy), agente .exe e segurança reforçada"',
+        'git commit -m "feat: RMM com login, site no painel e instalador .exe pré-configurado"',
         "git branch -M main",
         "",
         "# 2) Repositório já criado: andybq123/rmm — ligue o remoto e envie:",

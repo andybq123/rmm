@@ -1,24 +1,27 @@
-# Agente RMM — como virar .exe instalável
+# Agente RMM — instalador .exe pré-configurado (estilo Tactical RMM)
 
-O agente deste projeto é o `rmm-agent.py` (Python, código aberto neste repo), baixado na aba **Agentes** do painel.
+O fluxo deste projeto é o mesmo do Tactical RMM:
 
-**Nenhum domínio fica fixo** — nem no `.exe`, nem no instalador:
-- O **instalador da VPS** (`deploy/install-vps.sh`) pergunta o domínio e grava `DOMAIN`/`PUBLIC_URL` no `.env`; o `docker-compose.yml` e o Caddy leem de lá.
-- O **instalador do agente** (`RmmAgent-Setup.exe`) tem uma tela **"Servidor RMM"** que pergunta o domínio/servidor na hora da instalação e grava a resposta em `%ProgramData%\RmmAgent\config.json`. O agente lê o servidor desse arquivo (ou da variável `RMM_SERVER_URL`). Cada máquina pode apontar para um servidor diferente sem recompilar nada.
+1. **Crie o site no painel** — aba **Agentes → 1 · Criar o site**: nome do site + domínio público (`https://painel.suaempresa.com.br`).
+2. **Gere o instalador no painel** — **Agentes → 2 · Gerar o instalador Windows (.exe)** → **Gerar pacote do instalador**. O painel devolve 4 arquivos já com **site, domínio e token embutidos**:
+   - `rmm-agent.py` — o agente (Python, código aberto neste repo), já apontando para o site
+   - `config.json` — `serverUrl` + `enrollmentToken` + nome do site
+   - `build-exe.ps1` — compila o agente em `RmmAgent.exe` com PyInstaller
+   - `RmmAgent.iss` — script do Inno Setup que empacota o `.exe` + `config.json`
+3. **Compile uma vez** (máquina Windows de build, com Python 3.11+ e Inno Setup 6), com os 4 arquivos na mesma pasta:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\build-exe.ps1   # gera dist\RmmAgent.exe
+   iscc RmmAgent.iss                                          # gera RmmAgent-Setup-<site>.exe
+   ```
+4. **Distribua só o `RmmAgent-Setup-<site>.exe`**: em cada computador Windows, executar como administrador → Instalar. **Não pede domínio nem token** — o instalador copia o `config.json` pré-configurado para `%ProgramData%\RmmAgent\config.json`, instala o agente como serviço e a máquina aparece no painel em até 1 minuto.
 
-## Windows — gerar o .exe e o instalador
-1. Numa máquina Windows de build, coloque o `rmm-agent.py` baixado do painel na pasta `agent/`.
-2. Gere o executável: `powershell -ExecutionPolicy Bypass -File windows/build-exe.ps1` → `dist/RmmAgent.exe` (PyInstaller). Não embuta `config.json` com domínio — ele é gerado na instalação.
-3. Gere o instalador que o usuário final usa: abra `windows/RmmAgent.iss` no **Inno Setup 6** e compile → `RmmAgent-Setup.exe`. É esse arquivo que você distribui: baixar, executar como administrador, **digitar o domínio do seu servidor na tela do instalador**, pronto — o agente roda como serviço apontando para aquele domínio.
-4. Instalação silenciosa (opcional): `RmmAgent-Setup.exe /SERVER=https://<seu-dominio>` pré-preenche a tela do servidor.
-5. Sem certificado de assinatura de código, o Windows SmartScreen mostra um aviso na primeira instalação ("Mais informações → Executar assim mesmo"). Para produção, assine o .exe com `signtool` e um certificado OV/EV.
+> Os arquivos `windows/RmmAgent.iss` e `windows/build-exe.ps1` deste repositório são o **modelo** desse pacote. Para um site real, use sempre os arquivos **gerados pelo painel** — são eles que carregam o domínio e o token do seu site.
+
+## Troca de domínio ou de token
+Se você alterar o domínio do site ou rotacionar o token no painel, **gere um novo pacote e redistribua** o novo instalador. Instaladores antigos continuam apontando para a configuração anterior — mesmo comportamento do Tactical RMM.
+
+## Assinatura de código
+Sem certificado de assinatura, o Windows SmartScreen mostra um aviso na primeira instalação ("Mais informações → Executar assim mesmo"). Para produção, assine o `.exe` e o instalador com `signtool` e um certificado OV/EV.
 
 ## Linux
-Use o script Bash da aba Agentes + `deploy/rmm-agent.service` (systemd). Sem servidor configurado, o script **pergunta o domínio** na primeira execução e grava em `/opt/rmm-agent/agent.env`: `systemctl enable --now rmm-agent`.
-
-## Alternativas 100% open source com .exe próprio
-Se preferir não manter agente próprio, estas plataformas open source distribuem agente .exe pronto — mas são um RMM completo à parte (painel próprio), não um agente deste painel:
-- **MeshCentral** (Apache-2.0) — MeshAgent .exe gerado pelo seu servidor MeshCentral.
-- **TacticalRMM** — agente .exe/MSI pelo painel Tactical.
-- **RustDesk** (AGPL) — foco em acesso remoto, não em telemetria RMM.
-A recomendação para este projeto é o caminho PyInstaller + Inno Setup acima: mantém um painel só, um token só e o domínio sempre informado na instalação.
+Use o script Bash da aba **Agentes** do painel — ele também já sai pré-configurado com o site — com o serviço systemd de `deploy/rmm-agent.service`: `systemctl enable --now rmm-agent`.

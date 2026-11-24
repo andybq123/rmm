@@ -5,8 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Nenhum domínio fixo: a URL vem de /opt/rmm-agent/agent.env, gravado
-# quando o agente pergunta o servidor na instalação da máquina:
+# A URL vem de /opt/rmm-agent/agent.env. O script gerado pelo painel
+# (aba Agentes) já nasce pré-configurado com o site; este arquivo de
+# ambiente só é necessário se você sobrescrever o servidor:
 #   RMM_SERVER_URL=https://<seu-dominio>/actions
 EnvironmentFile=/opt/rmm-agent/agent.env
 ExecStart=/usr/bin/env bash /opt/rmm-agent/rmm-agent-linux.sh

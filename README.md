@@ -4,7 +4,7 @@ Painel web corporativo para monitoramento remoto (RMM) de computadores Windows e
 
 **Repositório:** andybq123/rmm
 
-> **Fluxo estilo Tactical RMM:** você instala o painel na VPS, **cria o site no painel** (nome + domínio, na aba **Agentes**) e **gera o instalador `.exe` já pré-configurado** com esse site, o domínio e o token. Em cada máquina Windows é só executar o instalador — ele **não pede domínio nem token**.
+> **Fluxo estilo Tactical RMM:** você instala o painel na VPS, **cria o site no painel** (nome + domínio, na aba **Agentes**) e clica em **Gerar pacote novo**: o instalador `.exe` é **compilado dentro da própria VPS** e sai pronto para baixar, já pré-configurado com esse site, o domínio e o token. Em cada máquina Windows é só executar o instalador — ele **não pede domínio nem token**.
 
 ## Funcionalidades
 - Tela de login com usuários, papéis (Administrador / Operador / Visualizador) e sessões de 7 dias
@@ -12,7 +12,7 @@ Painel web corporativo para monitoramento remoto (RMM) de computadores Windows e
 - Métricas por máquina: CPU, RAM, disco, uptime, IP, MAC, hardware e histórico em gráfico
 - Alertas automáticos quando CPU, RAM ou disco passam de 90%
 - Comandos remotos: reiniciar, desligar, coletar informações e executar script
-- **Site no painel + instalador .exe gerado pré-configurado** (domínio + token embutidos, como no Tactical RMM)
+- **Site no painel + instalador .exe compilado dentro da VPS** (domínio + token embutidos, como no Tactical RMM): **Gerar pacote novo** compila no serviço builder da VPS (Wine + Inno Setup) e devolve o `.exe` pronto para baixar
 - Agentes de script: Bash (Linux), PowerShell (Windows) e Python universal — envio a cada 60s, já apontando para o site
 - Token de matrícula para cadastro seguro de novos dispositivos
 
@@ -21,6 +21,7 @@ Painel web corporativo para monitoramento remoto (RMM) de computadores Windows e
 client/            React + Tailwind (interface)
 server/            Backend (actions tipadas) + autenticação + agentes
 standalone/        Servidor do app na VPS (serve o painel + executa as actions, porta 3000)
+builder/           Serviço que compila o instalador .exe dentro da VPS (Wine + Python de Windows + Inno Setup)
 drizzle/           Migrations SQL
 deploy/            VPS: install-vps.sh, Caddyfile, nginx.conf, backup.sh, rmm-agent.service
 agent/             Build do .exe (PyInstaller) e instalador (Inno Setup)
@@ -83,11 +84,11 @@ O `install-vps.sh` já faz isso no final. Para subir de novo (ou após um `git p
 
 ```bash
 docker compose up -d --build
-docker compose ps              # DOIS serviços "Up": rmm-app e rmm-caddy
+docker compose ps              # TRÊS serviços "Up": rmm-app, rmm-builder e rmm-caddy
 docker compose logs -f caddy   # acompanhe a emissão do certificado Let's Encrypt (Ctrl+C sai)
 ```
 
-São dois containers: o **rmm-app** (o painel em si, construído pelo `Dockerfile`, ouvindo na porta interna 3000) e o **rmm-caddy** (portas 80/443, HTTPS automático, encaminha para `app:3000`). Se subir só o Caddy, o site responde **502** — é o sintoma de que o app não subiu.
+São três containers: o **rmm-app** (o painel em si, construído pelo `Dockerfile`, ouvindo na porta interna 3000), o **rmm-builder** (compila o instalador `.exe` dentro da VPS — Wine + Inno Setup, sem porta pública) e o **rmm-caddy** (portas 80/443, HTTPS automático, encaminha para `app:3000`). Se subir só o Caddy, o site responde **502** — é o sintoma de que o app não subiu. **A primeira build do builder demora alguns minutos** (baixa Wine, o Python de Windows e o Inno Setup) — acontece uma vez só; as próximas reaproveitam o cache.
 
 O `docker-compose.yml` lê `DOMAIN`/`PUBLIC_URL` do `.env` — sem `.env` válido ele para e avisa, de propósito. O Caddy pede e renova o certificado sozinho. O banco do painel fica no volume Docker `rmm_app_data` (sobrevive a `docker compose down` sem `-v`).
 
@@ -101,16 +102,14 @@ Abra `https://painel.suaempresa.com.br` no navegador.
 ### Passo 6 — Crie o primeiro administrador
 Na primeira abertura, o painel mostra **Configuração inicial**: nome, e-mail e senha (mín. 8 caracteres) do primeiro **Administrador**. Depois disso, o acesso é pela tela de login; crie os demais usuários em **Usuários**.
 
-### Passo 7 — Crie o site e gere o instalador do agente (estilo Tactical RMM)
+### Passo 7 — Crie o site e baixe o instalador do agente (estilo Tactical RMM)
 1. No painel, abra **Agentes → 1 · Criar o site**: dê um nome ao site (ex.: `Matriz`) e informe o domínio público com `https://` (o mesmo da VPS). Salve.
-2. Em **Agentes → 2 · Gerar o instalador Windows (.exe)**, clique em **Gerar pacote do instalador** e baixe os 4 arquivos gerados (`rmm-agent.py`, `config.json`, `build-exe.ps1`, `RmmAgent.iss`) — eles já nascem com **domínio, site e token embutidos**.
-3. Numa máquina Windows de build (uma vez só por site): instale Python 3.11+ e Inno Setup 6, coloque os 4 arquivos na mesma pasta e rode:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\build-exe.ps1   # gera dist\RmmAgent.exe (PyInstaller)
-   iscc RmmAgent.iss                                          # gera o instalador final
-   ```
-4. Distribua o `RmmAgent-Setup-<site>.exe` gerado: em cada computador Windows, **só executar como administrador e instalar** — não pede domínio nem token; o agente instala como serviço e aparece no painel em até 1 minuto.
+2. Em **Agentes → 2 · Gerar o instalador Windows (.exe)**, clique em **Gerar pacote novo**. A compilação acontece **dentro da VPS**, no serviço **builder**: o painel mostra o progresso e o log. Na primeira vez, o builder também compila o executável do agente (PyInstaller sob Wine) e pode levar alguns minutos; nas seguintes, ele só monta o instalador do site e leva segundos.
+3. Com o status **Pronto**, clique em **Baixar instalador .exe**: um único arquivo `RmmAgent-Setup-<site>.exe`, já com **domínio, site e token embutidos**.
+4. Distribua esse `.exe`: em cada computador Windows, **só executar como administrador e instalar** — não pede domínio nem token; o agente instala como serviço e aparece no painel em até 1 minuto.
 5. **Linux:** baixe o script Bash na mesma aba Agentes (também já sai apontando para o site) e rode `sudo bash rmm-agent-linux.sh`, ou use o serviço `deploy/rmm-agent.service`.
+
+Se a compilação falhar, o painel mostra o erro e o final do log; o log completo do serviço fica em `docker compose logs builder` na VPS.
 
 ### Passo 8 — Backup diário do banco
 ```bash
@@ -134,7 +133,7 @@ docker compose up -d --build
 ---
 
 ## Agentes
-- **Windows (.exe) — fluxo principal:** site criado no painel → **Gerar pacote do instalador** na aba Agentes → compilar uma vez com `agent/windows/build-exe.ps1` (PyInstaller) + `agent/windows/RmmAgent.iss` (Inno Setup). O instalador final já vem com site, domínio e token pré-configurados — o usuário final só executa e instala. Detalhes em `agent/README.md`.
+- **Windows (.exe) — fluxo principal:** site criado no painel → **Gerar pacote novo** na aba Agentes → o serviço **builder** compila o instalador **dentro da VPS** (o executável do agente é compilado uma vez com PyInstaller sob Wine e fica em cache; cada build roda o Inno Setup com o `config.json` do site) → **baixar o `.exe` pronto**. O instalador já vem com site, domínio e token pré-configurados — o usuário final só executa e instala. Detalhes em `agent/README.md`. O pacote-fonte (`build-exe.ps1` + `RmmAgent.iss`) continua disponível na mesma aba para quem preferir compilar manualmente no Windows.
 - **Linux:** script Bash gerado na aba Agentes (já com o site embutido) + serviço systemd em `deploy/rmm-agent.service`.
 - Trocar de domínio ou rotacionar o token exige **gerar um novo instalador** no painel e redistribuir — é o mesmo comportamento do Tactical RMM.
 

@@ -1,13 +1,17 @@
-# RMM Console — VPS Linux: app (painel + API) + proxy HTTPS (Caddy)
-# São DOIS serviços: "app" serve o painel na porta interna 3000 e o
-# "caddy" recebe 80/443 e encaminha para app:3000 na rede do compose.
+# RMM Console — VPS Linux: app (painel + API) + builder (.exe) + proxy HTTPS (Caddy)
+# São TRÊS serviços: "app" serve o painel na porta interna 3000, "builder"
+# compila o instalador Windows .exe dentro da VPS (Wine + Inno Setup, porta
+# interna 8080, SEM porta pública) e o "caddy" recebe 80/443 e encaminha
+# para app:3000 na rede do compose.
 # Se subir só o Caddy, o navegador recebe 502 (não há app ouvindo).
 # O domínio NÃO é fixo: vem do .env (DOMAIN / PUBLIC_URL), preenchido pelo
 # deploy/install-vps.sh, que PERGUNTA o domínio na instalação.
 # Sem DOMAIN no .env, o compose para de propósito com a mensagem abaixo.
 # Uso (na RAIZ do projeto, onde está este arquivo):
 #      docker compose up -d --build
-#      docker compose ps        # rmm-app e rmm-caddy devem estar "Up"
+#      docker compose ps        # rmm-app, rmm-builder e rmm-caddy "Up"
+# A primeira build do "builder" demora (baixa Wine, Python de Windows e
+# Inno Setup); as seguintes reaproveitam as camadas e o cache.
 services:
   app:
     build: .
@@ -20,6 +24,22 @@ services:
       - app_data:/app/data
     expose:
       - "3000"
+    depends_on:
+      - builder
+  builder:
+    build:
+      context: .
+      dockerfile: builder/Dockerfile
+    container_name: rmm-builder
+    restart: unless-stopped
+    environment:
+      - BUILDER_PORT=8080
+      - BUILDS_DIR=/builds
+    volumes:
+      - builds_data:/builds
+      - builder_cache:/srv/cache
+    expose:
+      - "8080"
   caddy:
     image: caddy:2-alpine
     container_name: rmm-caddy
@@ -39,5 +59,7 @@ services:
       - PUBLIC_URL=${PUBLIC_URL:?Defina PUBLIC_URL no arquivo .env - https:// + o seu DOMAIN}
 volumes:
   app_data:
+  builds_data:
+  builder_cache:
   caddy_data:
   caddy_config:

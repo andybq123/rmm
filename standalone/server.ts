@@ -15,6 +15,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, extname, join, normalize } from "node:path";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { eq } from "drizzle-orm";
 import type { Ctx } from "@hatch/space-sdk";
 import { Actions } from "../server/src/actions";
 import * as schema from "../server/src/schema";
@@ -92,6 +93,46 @@ async function handleActions(req: Request): Promise<Response> {
   }
 }
 
+// ---------- Download do instalador .exe compilado pelo builder ----------
+// GET /installer-download/<buildId>?t=<sessionToken>
+// O .exe NÃO passa pelas actions (JSON não é lugar para binário de ~15 MB):
+// ele fica no volume do serviço builder e esta rota — que só existe no
+// servidor da VPS — valida a sessão do painel no banco e faz proxy do
+// arquivo a partir do builder (rede interna do compose), já com
+// Content-Disposition de download.
+const BUILDER_URL = (process.env.BUILDER_URL ?? "http://builder:8080").replace(/\/+$/, "");
+
+async function handleInstallerDownload(url: URL): Promise<Response> {
+  const id = decodeURIComponent(url.pathname.slice("/installer-download/".length)).split("/")[0] ?? "";
+  const token = url.searchParams.get("t") ?? "";
+  if (!id || !token) return json({ error: "Download inválido: informe o build e a sessão." }, 400);
+  const sRows = await db.select().from(schema.sessions).where(eq(schema.sessions.token, token)).limit(1);
+  const s = sRows[0];
+  if (!s || s.expiresAt.getTime() < Date.now()) return json({ error: "Sessão expirada. Faça login de novo e gere o download pelo painel." }, 401);
+  const bRows = await db.select().from(schema.installerBuilds).where(eq(schema.installerBuilds.id, id)).limit(1);
+  const b = bRows[0];
+  if (!b) return json({ error: "Build não encontrado." }, 404);
+  if (b.status !== "ready") return json({ error: `Este instalador ainda não está pronto (status: ${b.status}).` }, 409);
+  if (!BUILDER_URL) return json({ error: "Serviço builder não configurado neste servidor (BUILDER_URL)." }, 503);
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${BUILDER_URL}/builds/${encodeURIComponent(id)}/file`);
+  } catch {
+    return json({ error: "Serviço builder indisponível no momento. Verifique: docker compose logs builder" }, 502);
+  }
+  if (!upstream.ok || !upstream.body) return json({ error: "O builder não devolveu o arquivo do instalador." }, 502);
+  const fileName = b.installerFileName || "RmmAgent-Setup.exe";
+  return new Response(upstream.body, {
+    status: 200,
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-disposition": `attachment; filename="${fileName}"`,
+      ...(b.sizeBytes ? { "content-length": String(b.sizeBytes) } : {}),
+      "cache-control": "no-store",
+    },
+  });
+}
+
 // ---------- Arquivos estáticos do painel (SPA) ----------
 function staticResponse(pathname: string): Response | null {
   const rel = normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, "");
@@ -107,6 +148,10 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
     if (url.pathname === "/health") return json({ ok: true });
+    if (url.pathname.startsWith("/installer-download/")) {
+      if (req.method !== "GET") return json({ error: "Use GET." }, 405);
+      return handleInstallerDownload(url);
+    }
     if (url.pathname === "/actions") {
       if (req.method !== "POST") return json({ error: "Use POST em /actions." }, 405);
       return handleActions(req);

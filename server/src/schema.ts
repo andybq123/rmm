@@ -85,6 +85,20 @@ export const sessions = sqliteTable("sessions", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
 });
 
+export const installerBuilds = sqliteTable("installer_builds", {
+  id: text("id").primaryKey(),
+  siteName: text("site_name").notNull().default(""),
+  domain: text("domain").notNull().default(""),
+  installerFileName: text("installer_file_name").notNull().default(""),
+  status: text("status", { enum: ["queued", "building", "ready", "failed", "unavailable"] }).notNull().default("building"),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  error: text("error").notNull().default(""),
+  logTail: text("log_tail").notNull().default(""),
+  createdBy: text("created_by").notNull().default(""),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+});
+
 // Legacy table kept in type for migration compatibility — dropped in SQL
 export const entries = sqliteTable("entries", {
   id: integer("id").primaryKey({ autoIncrement: true }),

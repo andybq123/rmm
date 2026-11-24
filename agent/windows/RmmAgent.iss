@@ -12,6 +12,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\RmmAgent
 OutputBaseFilename=RmmAgent-Setup
+OutputDir=installer-output
 Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=admin

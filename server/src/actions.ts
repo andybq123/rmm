@@ -67,7 +67,7 @@ function buildGithubReadme(): string {
     "- Métricas por máquina: CPU, RAM, disco, uptime, IP, MAC, hardware e histórico em gráfico",
     "- Alertas automáticos quando CPU, RAM ou disco passam de 90%",
     "- Comandos remotos: reiniciar, desligar, coletar informações e executar script",
-    "- **Site no painel + instalador .exe gerado pré-configurado** (domínio + token embutidos, como no Tactical RMM)",
+    "- **Site no painel + instalador .exe compilado DENTRO da VPS** (domínio + token embutidos, como no Tactical RMM): clicar em **Gerar pacote novo** compila o instalador no serviço builder da VPS (Wine + Inno Setup) e devolve o `.exe` pronto para baixar — nada de compilar em máquina Windows",
     "- Agentes de script: Bash (Linux), PowerShell (Windows) e Python universal — envio a cada 60s, já apontando para o site",
     "- Token de matrícula para cadastro seguro de novos dispositivos",
     "",
@@ -80,6 +80,7 @@ function buildGithubReadme(): string {
     "  src/actions.ts Actions da API + scripts dos agentes + autenticação",
     "  src/schema.ts  Modelo de dados (Drizzle / SQLite)",
     "standalone/      Servidor do app na VPS (painel + actions, porta 3000)",
+    "builder/         Serviço que compila o instalador .exe dentro da VPS (Wine + Python de Windows + Inno Setup)",
     "drizzle/         Migrations SQL",
     "deploy/          VPS: install-vps.sh, Caddyfile, nginx.conf, backup.sh, rmm-agent.service",
     "agent/           Build do .exe (PyInstaller) e instalador (Inno Setup)",
@@ -138,7 +139,7 @@ function buildGithubReadme(): string {
     "docker compose ps        # DOIS serviços \"Up\": rmm-app e rmm-caddy",
     "docker compose logs -f caddy   # acompanhe a emissão do certificado Let's Encrypt (Ctrl+C sai)",
     "```",
-    "São dois containers: o **rmm-app** (o painel, construído pelo `Dockerfile`, porta interna 3000) e o **rmm-caddy** (80/443, encaminha para `app:3000`). Se subir só o Caddy, o site responde **502**.",
+    "São três containers: o **rmm-app** (o painel, construído pelo `Dockerfile`, porta interna 3000), o **rmm-builder** (compila o instalador .exe dentro da VPS) e o **rmm-caddy** (80/443, encaminha para `app:3000`). Se subir só o Caddy, o site responde **502**. A primeira build do builder demora alguns minutos (baixa Wine, o Python de Windows e o Inno Setup) — é uma vez só.",
     "O `docker-compose.yml` lê `DOMAIN`/`PUBLIC_URL` do `.env` — sem `.env` válido ele para e avisa, de propósito. O Caddy pede e renova o certificado sozinho. O banco fica no volume Docker `rmm_app_data`.",
     "",
     "### Passo 5 — Teste de fora da VPS",
@@ -150,16 +151,13 @@ function buildGithubReadme(): string {
     "### Passo 6 — Crie o primeiro administrador",
     "Na primeira abertura, o painel mostra **Configuração inicial**: nome, e-mail e senha (mín. 8 caracteres) do primeiro **Administrador**. Depois disso, o acesso é pela tela de login; crie os demais usuários em **Usuários**.",
     "",
-    "### Passo 7 — Crie o site e gere o instalador do agente (estilo Tactical RMM)",
+    "### Passo 7 — Crie o site e baixe o instalador do agente (estilo Tactical RMM)",
     "1. No painel, abra **Agentes → 1 · Criar o site**: dê um nome ao site (ex.: `Matriz`) e informe o domínio público com `https://` (o mesmo da VPS). Salve.",
-    "2. Em **Agentes → 2 · Gerar o instalador Windows (.exe)**, clique em **Gerar pacote do instalador** e baixe os 4 arquivos gerados (`rmm-agent.py`, `config.json`, `build-exe.ps1`, `RmmAgent.iss`) — eles já nascem com **domínio, site e token embutidos**.",
-    "3. Numa máquina Windows de build (uma vez só por site): instale Python 3.11+ e Inno Setup 6, coloque os 4 arquivos na mesma pasta e rode:",
-    "   ```powershell",
-    "   powershell -ExecutionPolicy Bypass -File .\\build-exe.ps1   # gera dist\\RmmAgent.exe (PyInstaller)",
-    "   iscc RmmAgent.iss                                          # gera o instalador final",
-    "   ```",
-    "4. Distribua o `RmmAgent-Setup-<site>.exe` gerado: em cada computador Windows, **só executar como administrador e instalar** — não pede domínio nem token; o agente instala como serviço e aparece no painel em até 1 minuto.",
+    "2. Em **Agentes → 2 · Gerar o instalador Windows (.exe)**, clique em **Gerar pacote novo**. A compilação acontece **dentro da VPS**, no serviço **builder** (Wine + Inno Setup): o painel mostra o progresso (na primeira vez, o builder compila também o executável do agente com PyInstaller e isso pode levar alguns minutos; nas seguintes, só monta o instalador e leva segundos).",
+    "3. Quando o status ficar **Pronto**, clique em **Baixar instalador .exe** — é um único arquivo `RmmAgent-Setup-<site>.exe`, já com **domínio, site e token embutidos**.",
+    "4. Distribua esse `.exe`: em cada computador Windows, **só executar como administrador e instalar** — não pede domínio nem token; o agente instala como serviço e aparece no painel em até 1 minuto.",
     "5. **Linux:** baixe o script Bash na mesma aba Agentes (também já sai apontando para o site) e rode `sudo bash rmm-agent-linux.sh`, ou use o serviço `deploy/rmm-agent.service`.",
+    "Se a compilação falhar, o painel mostra o erro e o final do log; na VPS, `docker compose logs builder` traz o log completo do serviço de build.",
     "",
     "### Passo 8 — Backup diário do banco",
     "```bash",
@@ -183,7 +181,7 @@ function buildGithubReadme(): string {
     "---",
     "",
     "## Agentes",
-    "- **Windows (.exe) — fluxo principal:** site criado no painel → **Gerar pacote do instalador** na aba Agentes → compilar uma vez com `agent/windows/build-exe.ps1` (PyInstaller) + `agent/windows/RmmAgent.iss` (Inno Setup). O instalador final já vem com site, domínio e token pré-configurados — o usuário final só executa e instala.",
+    "- **Windows (.exe) — fluxo principal:** site criado no painel → **Gerar pacote novo** na aba Agentes → o serviço **builder** compila o instalador **dentro da VPS** (Wine + Inno Setup; o executável do agente, via PyInstaller, é compilado uma vez e fica em cache) → **baixar o .exe pronto**. O instalador final já vem com site, domínio e token pré-configurados — o usuário final só executa e instala. O pacote-fonte (agente Python, config.json, build-exe.ps1, RmmAgent.iss) continua disponível na mesma aba para compilar manualmente numa máquina Windows, se preferir.",
     "- **Linux:** script Bash gerado na aba Agentes (já com o site embutido) + serviço systemd (`deploy/rmm-agent.service`).",
     "- Trocar de domínio ou rotacionar o token exige **gerar um novo instalador** no painel e redistribuir — é o mesmo comportamento do Tactical RMM.",
     "",
@@ -224,15 +222,16 @@ function buildDeploymentFiles(publicUrl: string) {
   const actionsUrl = actionsUrlFromPublic(publicUrl);
   const domainForDocs = domain || "<domínio informado na instalação>";
   const dockerCompose = `# RMM Console — docker-compose para VPS Linux
-# São DOIS serviços: "app" (o painel, porta interna 3000, imagem do
-# Dockerfile da raiz) e "caddy" (80/443, encaminha para app:3000).
-# Se subir só o Caddy, o navegador recebe 502 — não há app ouvindo.
+# São TRÊS serviços: "app" (o painel, porta interna 3000, imagem do
+# Dockerfile da raiz), "builder" (compila o instalador .exe dentro da VPS
+# com Wine + Inno Setup, porta interna 8080, sem porta pública) e "caddy"
+# (80/443, encaminha para app:3000). Sem o app, o site responde 502.
 # O domínio NÃO fica fixo aqui: ele vem do .env (DOMAIN / PUBLIC_URL),
 # preenchido pelo deploy/install-vps.sh, que pergunta o domínio na instalação.
 # Sem DOMAIN no .env o compose falha de propósito (mensagem abaixo).
 # Uso (na RAIZ do projeto): cp deploy/.env.example .env  # edite DOMAIN/PUBLIC_URL
 #      docker compose up -d --build
-#      docker compose ps   # rmm-app e rmm-caddy devem estar "Up"
+#      docker compose ps   # rmm-app, rmm-builder e rmm-caddy "Up"
 services:
   app:
     build: .
@@ -245,6 +244,22 @@ services:
       - app_data:/app/data
     expose:
       - "3000"
+    depends_on:
+      - builder
+  builder:
+    build:
+      context: .
+      dockerfile: builder/Dockerfile
+    container_name: rmm-builder
+    restart: unless-stopped
+    environment:
+      - BUILDER_PORT=8080
+      - BUILDS_DIR=/builds
+    volumes:
+      - builds_data:/builds
+      - builder_cache:/srv/cache
+    expose:
+      - "8080"
   caddy:
     image: caddy:2-alpine
     container_name: rmm-caddy
@@ -264,6 +279,8 @@ services:
       - PUBLIC_URL=\${PUBLIC_URL:?Defina PUBLIC_URL no arquivo .env - ex. https:// + o seu DOMAIN}
 volumes:
   app_data:
+  builds_data:
+  builder_cache:
   caddy_data:
   caddy_config:
 `;
@@ -379,15 +396,16 @@ echo "[rmm] Base pronta. Próximos passos:"
 echo " 1) Confirme o DNS: registro A de $DOMAIN -> IP público desta VPS"
 echo " 2) No painel, em Agentes > Criar o site, salve o nome do site e $PUBLIC_URL"
 echo " 3) Teste de fora: curl -I $PUBLIC_URL"
-# 3) Sobe os DOIS serviços (app + caddy) a partir da RAIZ do projeto.
+# 3) Sobe os TRÊS serviços (app + builder + caddy) a partir da RAIZ do projeto.
 # NUNCA rode "docker compose" de dentro de deploy/: o risco é subir um
 # compose antigo/incompleto, só com o Caddy — o site responde 502 porque
 # não há app ouvindo. Aqui subimos da raiz, com o compose completo.
-echo "[rmm] Subindo o sistema (rmm-app + rmm-caddy)..."
+# A primeira build do builder demora (Wine + Python de Windows + Inno Setup).
+echo "[rmm] Subindo o sistema (rmm-app + rmm-builder + rmm-caddy)..."
 docker compose up -d --build
 docker compose ps
-echo "[rmm] Pronto. Os DOIS containers acima precisam estar 'Up'."
-echo "[rmm] Se o rmm-app não subiu, veja o motivo: docker compose logs app"
+echo "[rmm] Pronto. Os TRÊS containers acima precisam estar 'Up'."
+echo "[rmm] Se algo não subiu: docker compose logs app / docker compose logs builder"
 `;
   const backupScript = `#!/usr/bin/env bash
 # Backup diário do banco do RMM — agende no cron: 0 3 * * * /opt/rmm/deploy/backup.sh
@@ -440,6 +458,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\\RmmAgent
 DefaultGroupName={#MyAppName}
 OutputBaseFilename=RmmAgent-Setup
+OutputDir=installer-output
 Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=admin
@@ -501,6 +520,7 @@ AppInfoDescription=Agente RMM — site ${site} (${domain})
 DefaultDirName={autopf}\\RmmAgent
 DefaultGroupName={#MyAppName}
 OutputBaseFilename=RmmAgent-Setup-${slug}
+OutputDir=installer-output
 Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=admin
@@ -532,11 +552,16 @@ Write-Host "Resultado: RmmAgent-Setup-${slug}.exe — distribua este arquivo; qu
     `INSTALADOR DO AGENTE — SITE "${site.toUpperCase()}"`,
     `Servidor pré-configurado: ${actionsUrl}`,
     "",
-    "Este pacote foi gerado pelo painel (Agentes > Gerar instalador).",
+    "FORMA PRINCIPAL (recomendada): no painel, o botão \"Gerar pacote novo\"",
+    "já compila este instalador DENTRO da VPS (serviço builder) e devolve",
+    "o .exe pronto para baixar — você não precisa deste pacote-fonte.",
+    "",
+    "Este pacote-fonte foi gerado pelo painel (Agentes > Gerar instalador)",
+    "para o caso de você preferir compilar manualmente numa máquina Windows.",
     "Todos os arquivos já contêm o site, o domínio e o token de matrícula —",
     "o instalador final NÃO pede nenhuma configuração a quem instala.",
     "",
-    "GERAR O .EXE (uma vez por site, numa máquina Windows de build):",
+    "GERAR O .EXE MANUALMENTE (uma vez por site, numa máquina Windows de build):",
     "  1) Instale Python 3.11+ (python.org) e Inno Setup 6 (jrsoftware.org).",
     "  2) Coloque estes 4 arquivos na MESMA pasta:",
     "       rmm-agent.py   config.json   build-exe.ps1   RmmAgent.iss",
@@ -560,6 +585,77 @@ Write-Host "Resultado: RmmAgent-Setup-${slug}.exe — distribua este arquivo; qu
     "    na primeira instalação (Mais informações > Executar assim mesmo).",
   ].join("\n");
   return { configJson, innoSetup, buildExePs1, instructions, siteName: site, siteSlug: slug, installerFileName: `RmmAgent-Setup-${slug}.exe`, domain, actionsUrl };
+}
+
+// ---------- Builder do instalador .exe (serviço interno da VPS) ----------
+// O clique em "Gerar pacote novo" chama o serviço "builder" do
+// docker-compose (Wine + Inno Setup) pelo endereço fixo da rede interna
+// do compose, "builder:8080" — ele só resolve dentro da VPS e o builder
+// não publica porta nenhuma (o isolamento de rede é a proteção dele).
+// Neste ambiente (painel hospedado), o nome "builder" não resolve: a
+// chamada falha e a action devolve status "unavailable" com a
+// explicação — nunca um erro cru nem um .exe falso.
+const BUILDER_BASE_URL = "http://builder:8080";
+async function builderFetch(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  return await fetch(`${BUILDER_BASE_URL}${path}`, { ...init, headers: { "Content-Type": "application/json", ...(init.headers as Record<string, string> | undefined) }, signal: AbortSignal.timeout(timeoutMs) });
+}
+async function builderReachable(): Promise<boolean> {
+  try { const r = await builderFetch("/health", { method: "GET" }, 3000); return r.ok; } catch { return false; }
+}
+
+type BuildRow = typeof schema.installerBuilds.$inferSelect;
+const installerBuildSchema = z.object({
+  buildId: z.string(), status: z.enum(["queued", "building", "ready", "failed", "unavailable"]),
+  siteName: z.string(), domain: z.string(), fileName: z.string(), sizeBytes: z.number(),
+  error: z.string(), logTail: z.string(), downloadPath: z.string(),
+  createdAt: z.string(), finishedAt: z.string(),
+});
+type InstallerBuildOut = z.infer<typeof installerBuildSchema>;
+function buildOut(b: BuildRow): InstallerBuildOut {
+  return {
+    buildId: b.id, status: b.status, siteName: b.siteName, domain: b.domain,
+    fileName: b.installerFileName, sizeBytes: b.sizeBytes, error: b.error, logTail: b.logTail,
+    downloadPath: b.status === "ready" ? `installer-download/${b.id}` : "",
+    createdAt: b.createdAt.toISOString(), finishedAt: b.finishedAt ? b.finishedAt.toISOString() : "",
+  };
+}
+const unavailableBuild = (siteName: string, domain: string): InstallerBuildOut => ({
+  buildId: "", status: "unavailable", siteName, domain, fileName: "", sizeBytes: 0,
+  error: "A compilação do .exe roda dentro da VPS, no serviço builder (Wine + Inno Setup) que sobe junto com o painel no docker-compose. Neste ambiente o builder não está presente, então nenhum instalador foi gerado aqui. Na sua VPS atualizada (git pull + docker compose up -d --build), este mesmo botão compila e devolve o .exe pronto para baixar.",
+  logTail: "", downloadPath: "", createdAt: "", finishedAt: "",
+});
+
+async function syncBuildFromBuilder(ctx: Ctx, row: BuildRow): Promise<BuildRow> {
+  if (row.status !== "building" && row.status !== "queued") return row;
+  try {
+    const res = await builderFetch(`/builds/${encodeURIComponent(row.id)}`, { method: "GET" }, 6000);
+    if (!res.ok) return row;
+    const data = (await res.json()) as { status?: string; error?: string; logTail?: string; sizeBytes?: number; fileName?: string };
+    const next = data.status === "ready" || data.status === "failed" ? data.status : "building";
+    if (next === row.status && next === "building") {
+      // Atualiza o log parcial para a UI mostrar progresso
+      const logTail = (data.logTail ?? "").slice(-4000);
+      if (logTail && logTail !== row.logTail) {
+        const db = ctx.db<typeof schema>();
+        await db.update(schema.installerBuilds).set({ logTail }).where(eq(schema.installerBuilds.id, row.id));
+        return { ...row, logTail };
+      }
+      return row;
+    }
+    const db = ctx.db<typeof schema>();
+    const patch = {
+      status: next as BuildRow["status"],
+      error: (data.error ?? "").slice(0, 1200),
+      logTail: (data.logTail ?? "").slice(-4000),
+      sizeBytes: typeof data.sizeBytes === "number" ? data.sizeBytes : row.sizeBytes,
+      installerFileName: data.fileName || row.installerFileName,
+      finishedAt: next === "ready" || next === "failed" ? new Date() : null,
+    };
+    await db.update(schema.installerBuilds).set(patch).where(eq(schema.installerBuilds.id, row.id));
+    return { ...row, ...patch, finishedAt: patch.finishedAt ?? undefined } as BuildRow;
+  } catch {
+    return row; // builder momentaneamente inacessível: mantém "building"
+  }
 }
 
 type DeviceRow = typeof schema.devices.$inferSelect;
@@ -853,7 +949,7 @@ SERVER_URL = os.environ.get("RMM_SERVER_URL", "${resolvedActionsUrl}")
 # %ProgramData%/RmmAgent (também gerado pelo painel, com o mesmo site)
 # tem prioridade quando existe. SEM prompt interativo.
 def _resolve_server_url():
-    global SERVER_URL
+    global SERVER_URL, ENROLLMENT_TOKEN
     import pathlib as _p
     candidates = []
     _pd = os.environ.get("ProgramData")
@@ -865,6 +961,8 @@ def _resolve_server_url():
         try:
             if _cfg.exists():
                 _j = json.loads(_cfg.read_text())
+                if _j.get("enrollmentToken"):
+                    ENROLLMENT_TOKEN = str(_j["enrollmentToken"])
                 if _j.get("serverUrl"):
                     SERVER_URL = str(_j["serverUrl"]).rstrip("/")
                     if not SERVER_URL.endswith("/actions"): SERVER_URL += "/actions"
@@ -1220,6 +1318,88 @@ export const Actions = {
       const files = buildInstallerFiles(publicUrl, token, siteName);
       const scripts = buildScripts(token, publicUrl);
       return { ready: true, siteName: files.siteName, domain: files.domain, actionsUrl, installerFileName: files.installerFileName, agentPy: scripts.pythonPy, configJson: files.configJson, innoSetup: files.innoSetup, buildExePs1: files.buildExePs1, instructions: files.instructions };
+    },
+  }),
+
+  requestInstallerBuild: defineAction({
+    description: "Compila o instalador Windows (.exe) do site DENTRO da VPS (serviço builder com Wine + Inno Setup) e registra o build para acompanhamento e download. Sem builder (fora da VPS), retorna status unavailable explicando onde a compilação acontece. Requer sessão.",
+    request: z.object({ sessionToken: z.string().default("") }),
+    response: installerBuildSchema,
+    async handler(ctx, args): Promise<InstallerBuildOut> {
+      const me = await requireAuth(ctx, args.sessionToken);
+      const db = ctx.db<typeof schema>();
+      const pub = await db.select().from(schema.settings).where(eq(schema.settings.key, "public_url")).limit(1);
+      const publicUrl = pub[0]?.value ?? "";
+      const nam = await db.select().from(schema.settings).where(eq(schema.settings.key, "site_name")).limit(1);
+      const siteName = nam[0]?.value ?? "";
+      const actionsUrl = actionsUrlFromPublic(publicUrl);
+      const domain = domainFromPublic(publicUrl);
+      if (!actionsUrl) throw new Error("Crie o site primeiro (passo 1: nome + domínio https) para gerar o instalador.");
+      // Builder precisa estar vivo antes de criarmos o registro. Fora da
+      // VPS o nome "builder" nem resolve — aí o status é "unavailable".
+      if (!(await builderReachable())) {
+        return { ...unavailableBuild(siteName, domain), error: "O serviço builder não respondeu. A compilação do .exe roda dentro da VPS, no serviço builder (Wine + Inno Setup) que sobe junto com o painel. Se você está na VPS: confira docker compose ps (rmm-builder precisa estar Up) e docker compose logs builder; se o builder ainda não existe no seu compose, atualize com git pull && docker compose up -d --build — a primeira build dele baixa Wine, Python de Windows e Inno Setup e demora alguns minutos. Fora da VPS (como neste painel hospedado), compilar não é possível: nenhum instalador foi gerado aqui." };
+      }
+      const tRows = await db.select().from(schema.settings).where(eq(schema.settings.key, "enrollment_token")).limit(1);
+      let token = tRows[0]?.value;
+      if (!token) {
+        token = `rmm_${randHex(16)}`;
+        await db.insert(schema.settings).values({ key: "enrollment_token", value: token });
+      }
+      const files = buildInstallerFiles(publicUrl, token, siteName);
+      const buildId = `bld_${randHex(10)}`;
+      await db.insert(schema.installerBuilds).values({
+        id: buildId, siteName: files.siteName, domain, installerFileName: files.installerFileName,
+        status: "building", createdBy: me.id,
+      });
+      try {
+        const res = await builderFetch("/build", {
+          method: "POST",
+          body: JSON.stringify({ buildId, installerFileName: files.installerFileName, configJson: files.configJson, innoSetup: files.innoSetup, siteName: files.siteName }),
+        }, 10000);
+        if (!res.ok) throw new Error(`builder respondeu ${res.status}`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "falha ao chamar o builder";
+        await db.update(schema.installerBuilds).set({ status: "failed", error: `Não foi possível iniciar a compilação no builder: ${msg}`, finishedAt: new Date() }).where(eq(schema.installerBuilds.id, buildId));
+      }
+      const rows = await db.select().from(schema.installerBuilds).where(eq(schema.installerBuilds.id, buildId)).limit(1);
+      const row = rows[0];
+      if (!row) throw new Error("Falha ao registrar o build do instalador.");
+      ctx.invalidateQueries();
+      return buildOut(row);
+    },
+  }),
+
+  getInstallerBuild: defineAction({
+    description: "Retorna o status atual de um build de instalador .exe, sincronizando com o serviço builder da VPS (building, ready, failed) e o caminho de download quando pronto. Requer sessão.",
+    request: z.object({ sessionToken: z.string().default(""), buildId: z.string().min(1).max(80) }),
+    response: installerBuildSchema,
+    async handler(ctx, args): Promise<InstallerBuildOut> {
+      await requireAuth(ctx, args.sessionToken);
+      const db = ctx.db<typeof schema>();
+      const rows = await db.select().from(schema.installerBuilds).where(eq(schema.installerBuilds.id, args.buildId)).limit(1);
+      const row = rows[0];
+      if (!row) throw new Error("Build de instalador não encontrado.");
+      const synced = await syncBuildFromBuilder(ctx, row);
+      return buildOut(synced);
+    },
+  }),
+
+  listInstallerBuilds: defineAction({
+    description: "Lista os builds recentes do instalador .exe (mais novos primeiro), sincronizando os que ainda estão compilando com o builder da VPS. Requer sessão.",
+    request: z.object({ sessionToken: z.string().default("") }),
+    response: z.object({ builds: z.array(installerBuildSchema), builderAvailable: z.boolean() }),
+    async handler(ctx, args) {
+      await requireAuth(ctx, args.sessionToken);
+      const db = ctx.db<typeof schema>();
+      const rows = await db.select().from(schema.installerBuilds).orderBy(desc(schema.installerBuilds.createdAt)).limit(10);
+      const out: InstallerBuildOut[] = [];
+      let syncedCount = 0;
+      for (const r of rows) {
+        if ((r.status === "building" || r.status === "queued") && syncedCount < 5) { syncedCount++; out.push(buildOut(await syncBuildFromBuilder(ctx, r))); }
+        else out.push(buildOut(r));
+      }
+      return { builds: out, builderAvailable: await builderReachable() };
     },
   }),
 

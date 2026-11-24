@@ -56,13 +56,17 @@ echo " 1) Confirme o DNS: registro A de $DOMAIN -> IP público desta VPS"
 echo " 2) No painel, em Agentes > Criar o site, salve o nome do site e $PUBLIC_URL — o instalador do agente sai pré-configurado com ele"
 echo " 3) Teste de fora: curl -I $PUBLIC_URL"
 
-# 3) Sobe os DOIS serviços (app + caddy) a partir da RAIZ do projeto.
+# 3) Sobe os TRÊS serviços (app + builder + caddy) a partir da RAIZ do projeto.
 # NUNCA rode "docker compose" de dentro de deploy/: lá não há compose e o
 # risco é subir um compose antigo/incompleto, só com o Caddy — o site
 # responde 502 porque não há app ouvindo. Aqui subimos da raiz, com o
 # docker-compose.yml completo (app construído pelo Dockerfile + Caddy).
-echo "[rmm] Subindo o sistema (rmm-app + rmm-caddy)..."
+# A primeira build do serviço builder demora alguns minutos: ele baixa
+# Wine, o Python de Windows e o Inno Setup para compilar o .exe na VPS.
+echo "[rmm] Subindo o sistema (rmm-app + rmm-builder + rmm-caddy)..."
+echo "[rmm] A primeira build do builder (Wine + Inno Setup) pode demorar — é uma vez só."
 docker compose up -d --build
 docker compose ps
-echo "[rmm] Pronto. Os DOIS containers acima precisam estar 'Up'."
-echo "[rmm] Se o rmm-app não subiu, veja o motivo: docker compose logs app"
+echo "[rmm] Pronto. Os TRÊS containers acima precisam estar 'Up'."
+echo "[rmm] Se algo não subiu: docker compose logs app  /  docker compose logs builder"
+echo "[rmm] No painel (Agentes), o botão 'Gerar pacote novo' compila o .exe aqui na VPS."

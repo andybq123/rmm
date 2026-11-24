@@ -1,0 +1,25 @@
+# RMM Console — proxy reverso com HTTPS automático para VPS Linux
+# O domínio NÃO é fixo: vem do .env (DOMAIN / PUBLIC_URL), preenchido pelo
+# deploy/install-vps.sh, que PERGUNTA o domínio na instalação.
+# Sem DOMAIN no .env, o compose para de propósito com a mensagem abaixo.
+# Uso: cp deploy/.env.example .env   # ou rode o install-vps.sh, que pergunta
+#      docker compose up -d
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: rmm-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN:?Defina DOMAIN no arquivo .env - e o dominio desta VPS, informado na instalacao}
+      - PUBLIC_URL=${PUBLIC_URL:?Defina PUBLIC_URL no arquivo .env - https:// + o seu DOMAIN}
+volumes:
+  caddy_data:
+  caddy_config:

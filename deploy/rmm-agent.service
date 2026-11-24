@@ -1,0 +1,18 @@
+[Unit]
+Description=RMM Agent (Linux)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Nenhum domínio fixo: a URL vem de /opt/rmm-agent/agent.env, gravado
+# quando o agente pergunta o servidor na instalação da máquina:
+#   RMM_SERVER_URL=https://<seu-dominio>/actions
+EnvironmentFile=/opt/rmm-agent/agent.env
+ExecStart=/usr/bin/env bash /opt/rmm-agent/rmm-agent-linux.sh
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.space-build/
+app.db
+app.db-*
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
